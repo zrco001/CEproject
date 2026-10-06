@@ -39,28 +39,25 @@ jobs:
           import local_review_gate as gate
           import os
           c.maintainers_only()
+          c.require_protection()
           if os.environ['FIX_MODE'] == 'publish-fix':
               import base64
               branch = 'codex/local-review-gate-permissions'
-              commit = c.gh(f'commits/{branch}')
-              assert commit['sha'] == 'de85cd7d32fe3c2c3f139a43e27ea228344088a4'
-              assert [p['sha'] for p in commit['parents']] == ['6e742b8d7e9a91305f440a493d3a9550e7a57e19']
+              prepared = 'dd6cb83ade43ea1a8dfec56ee499d7f914cdf2c1'
+              commit = c.gh(f'commits/{prepared}')
+              assert commit['sha'] == prepared
+              assert [p['sha'] for p in commit['parents']] == ['de85cd7d32fe3c2c3f139a43e27ea228344088a4']
               assert len(commit['files']) == 1
               path = '.github/workflows/ai-development-loop.yml'
               assert commit['files'][0]['filename'] == path
               before = base64.b64decode(c.gh(f'contents/{path}?ref=main')['content']).decode()
               after = base64.b64decode(c.gh(f'contents/{path}?ref={commit["sha"]}')['content']).decode()
-              expected = before.replace('      pull-requests: read\n', '      # Required to post the gate result to a PR\'s conversation.\n      # This job never submits APPROVE reviews or calls the merge API.\n      pull-requests: write\n')
+              expected = before.replace('      pull-requests: read\n', '      # Write permission lets the trusted gate publish its PR conversation result.\n      # This job never submits APPROVE reviews or calls the merge API.\n      pull-requests: write\n')
               assert before != expected and after == expected
               # The final reviewable push must be independent of the human reviewer.
-              # Change only the explanatory comment, on this exact verified branch.
-              item = c.gh(f'contents/{path}?ref={branch}')
-              packaged = after.replace('# Required to post the gate result to a PR\'s conversation.', '# Write permission lets the trusted gate publish its PR conversation result.')
-              assert packaged != after
-              c.gh(f'contents/{path}', 'PUT', {
-                  'message': 'docs: clarify the trusted gate PR comment permission',
-                  'branch': branch, 'sha': item['sha'],
-                  'content': base64.b64encode(packaged.encode()).decode()})
+              # Publish only this already prepared descendant; never force-push.
+              assert c.gh(f'commits/{branch}')['sha'] == 'de85cd7d32fe3c2c3f139a43e27ea228344088a4'
+              c.gh(f'git/refs/heads/{branch}', 'PATCH', {'sha': prepared, 'force': False})
               existing = c.gh(f'pulls?state=open&head=zrco001:{branch}')
               if existing:
                   print(existing[0]['html_url'])
