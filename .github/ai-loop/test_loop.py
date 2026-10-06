@@ -51,6 +51,18 @@ class PolicyTests(unittest.TestCase):
 
 
 class OrchestrationTests(unittest.TestCase):
+    def test_repository_settings_url_has_no_trailing_slash(self):
+        with patch.dict(os.environ, {"GH_TOKEN": "test-only"}), patch.object(c, "request") as request:
+            c.gh("")
+            request.assert_called_once_with(f"{c.API}/repos/{c.REPO}", "GET", None, "test-only")
+
+    def test_repository_resource_url_preserves_path_and_request(self):
+        body = {"state": "pending"}
+        with patch.dict(os.environ, {"GH_TOKEN": "test-only"}), patch.object(c, "request") as request:
+            c.gh("statuses/" + "a" * 40, "POST", body)
+            request.assert_called_once_with(f"{c.API}/repos/{c.REPO}/statuses/" + "a" * 40,
+                                           "POST", body, "test-only")
+
     def test_stale_review_has_no_side_effect(self):
         newer = pr()
         newer["head"]["sha"] = "b" * 40
