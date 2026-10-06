@@ -62,7 +62,8 @@ def request(url, method="GET", body=None, token=None):
 
 
 def gh(path, method="GET", body=None):
-    return request(f"{API}/repos/{REPO}/{path}", method, body, os.environ["GH_TOKEN"])
+    root = f"{API}/repos/{REPO}"
+    return request(root + (f"/{path}" if path else ""), method, body, os.environ["GH_TOKEN"])
 
 
 def pages(path):

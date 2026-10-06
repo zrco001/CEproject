@@ -6,7 +6,9 @@ import urllib.request
 
 
 def probe(label, url, token, extra=None):
-    headers = {"User-Agent": "CEproject-activation-check", "Authorization": "Bearer " + token}
+    headers = {"User-Agent": "CEproject-activation-check"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
     headers.update(extra or {})
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
@@ -37,3 +39,12 @@ if models:
           if m["id"].startswith(("gpt-5", "gpt-4.1"))))
 probe("Anthropic model access", "https://api.anthropic.com/v1/models", "", {
     "x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01"})
+
+import controller
+controller.require_protection()
+print("Controller protection check: PASS")
+try:
+    result = controller.review({"scope_only": True, "task": "Add an ordinary Markdown local quickstart using existing README commands. No application code or protected paths will change."})
+    print("OpenAI live structured scope review:", result["decision"])
+except Exception as error:
+    print("OpenAI live structured scope review:", type(error).__name__, str(error))
