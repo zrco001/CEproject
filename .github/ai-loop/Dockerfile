@@ -1,6 +1,7 @@
 # Only this trusted image can execute; application dependencies/scripts never run here.
-FROM node:24-bookworm-slim
-RUN npm install --global --ignore-scripts @anthropic-ai/claude-code@2.1.292
+FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+# The official pinned package's installer selects the Linux native binary.
+RUN npm install --global @anthropic-ai/claude-code@2.1.292
 RUN useradd --create-home --uid 1001 agent
 USER agent
 WORKDIR /repo
