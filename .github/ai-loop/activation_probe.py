@@ -1,0 +1,39 @@
+"""Temporary read-only activation probe; never prints credentials or response bodies."""
+import json
+import os
+import urllib.error
+import urllib.request
+
+
+def probe(label, url, token, extra=None):
+    headers = {"User-Agent": "CEproject-activation-check", "Authorization": "Bearer " + token}
+    headers.update(extra or {})
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
+            data = json.load(response)
+            print(f"{label}: HTTP {response.status}")
+            return data
+    except urllib.error.HTTPError as error:
+        print(f"{label}: HTTP {error.code}")
+        return None
+
+
+repo = os.environ["GITHUB_REPOSITORY"]
+actor = os.environ["GITHUB_ACTOR"]
+root = f"https://api.github.com/repos/{repo}"
+gh = os.environ["GH_TOKEN"]
+pat = os.environ["AI_PROTECTION_READ_TOKEN"]
+probe("Actor identity", f"https://api.github.com/users/{actor}", gh)
+probe("GITHUB_TOKEN collaborator permission", f"{root}/collaborators/{actor}/permission", gh)
+probe("Read-only PAT collaborator permission", f"{root}/collaborators/{actor}/permission", pat)
+protection = probe("Read-only PAT main protection", f"{root}/branches/main/protection", pat)
+if protection:
+    print("Required contexts:", protection.get("required_status_checks", {}).get("contexts"))
+key = os.environ["OPENAI_API_KEY"]
+probe("OpenAI selected model", "https://api.openai.com/v1/models/" + os.environ["OPENAI_REVIEW_MODEL"], key)
+models = probe("OpenAI accessible models", "https://api.openai.com/v1/models", key)
+if models:
+    print("Accessible review candidates:", sorted(m["id"] for m in models.get("data", [])
+          if m["id"].startswith(("gpt-5", "gpt-4.1"))))
+probe("Anthropic model access", "https://api.anthropic.com/v1/models", "", {
+    "x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01"})
