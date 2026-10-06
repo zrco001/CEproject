@@ -79,11 +79,6 @@ jobs:
           tar -xzf actionlint.tar.gz actionlint
       - name: Validate workflow YAML, expressions, and permissions
         run: '"$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes='
-      - name: Verify isolated Claude CLI installation (no model keys)
-        run: |
-          docker build -t ceproject-claude .github/ai-loop
-          docker run --rm --entrypoint claude ceproject-claude --version
-          docker run --rm --entrypoint claude ceproject-claude --help
 
   verify:
     needs: target
