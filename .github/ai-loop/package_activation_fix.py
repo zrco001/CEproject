@@ -1,41 +1,68 @@
-"""Publish this exact agent-prepared fix for independent human owner review."""
-import json
+"""One-time, exact-commit packaging and gate checks; never calls any model API."""
 import os
-from pathlib import Path
-
 import controller as c
+import local_review_gate as gate
+from policy import risk_paths
 
-FIX = "87dc9e47e56a0a0effaa7c8da14cbfb97054ff98"
+INFRA = "f04465f458bf1f12dacddec53161920d9dbb3c7a"
+OLD = "87dc9e47e56a0a0effaa7c8da14cbfb97054ff98"
+SMOKE = "295c671f0068fa19cdbe02efa85499b86ab7d5da"
 BASE = "13695473a6e66f10552f5515806dbec9f85f8c1f"
-BRANCH = "codex/ai-settings-endpoint"
-ALLOWED = {".github/ai-loop/controller.py", ".github/ai-loop/test_loop.py"}
+PLANS = [
+    {"sha": INFRA, "parent": OLD, "branch": "codex/ai-settings-endpoint", "number": 3,
+     "files": {".github/PULL_REQUEST_TEMPLATE.md", ".github/ai-loop/local_claude.py", ".github/ai-loop/local_review_gate.py", ".github/ai-loop/policy.py", ".github/ai-loop/test_local_loop.py", ".github/workflows/ai-development-loop.yml", ".github/workflows/ci.yml", "CLAUDE.md", "docs/AI-DEVELOPMENT-LOOP.md"},
+     "title": "Use existing Claude/Codex subscriptions with no model API billing",
+     "body": "Claude implementation now runs locally with the existing Claude subscription. Codex independently reviews exported proposals and passes feedback directly to Claude; GitHub only verifies exact-head local review attestation, CI and human guardrails. Removes all model secrets/calls and cloud implementation jobs from the active workflow.\n\nAdds a bounded subscription-only local runner and 16 new guard tests (38 total passing locally). Preserves Architecture Approved v0.3 byte-for-byte, financial/security/migration stops, enforced main protection and manual final merge. Also fixes the repository settings URL that blocked activation.\n\nActual smoke: Claude Pro wrote a quickstart, Codex requested corrections, Claude revised it on attempt 2; a separate draft PR contains that documentation. No API inference, new credits or extra usage were used. Claude extra usage and auto reload are OFF; monthly extra spending limit is US$0.\n\nValidation: local 38 guard tests, actionlint and formatting passed. Full CI for this exact SHA is dispatched separately. Bootstrap gate remains human-required until independent human approval on this exact commit and successful CI. Prepared by Codex; Actions packages this draft so the owner can review independently. AI never approves or merges.\n\nAfter manual merge, enable the replacement AI Development Loop. Do not enable the old API workflow. Only AI_PROTECTION_READ_TOKEN remains in use (expires 2026-11-06); OpenAI/Anthropic API secrets are unused."},
+    {"sha": SMOKE, "parent": BASE, "branch": "claude/local-smoke-issue-2", "number": None,
+     "files": {"docs/LOCAL-DEVELOPMENT-QUICKSTART.md"},
+     "title": "docs: local Claude Pro and Codex collaboration smoke",
+     "body": "Closes #2\n\nClaude Pro produced the quickstart using existing subscription quota. Codex independently reviewed the full export against README and .env.example, requested explicit unverified-runtime wording and Traditional Chinese, then reviewed Claude's second attempt. Only ordinary documentation changes; no architecture, code, migration, security, tenant or financial changes.\n\nLocal formatting passed. Full exact-head CI is dispatched separately. Neither agent started the application, and the document clearly states that runtime behavior was not tested. No model API key or additional model payment was used. This PR stays draft for human review and manual merge.\n\nThe maintainer account posts the actual local Codex review as a SHA-bound attestation; this is not a GitHub APPROVE review."},
+]
+
+
+def checked_pr(plan):
+    prs = c.gh("pulls?state=open&head=" + c.REPO.split("/")[0] + ":" + plan["branch"])
+    if len(prs) != 1:
+        raise ValueError("Expected exactly one open prepared PR")
+    pr = c.gh("pulls/" + str(prs[0]["number"]))
+    if not c.eligible(pr) or pr["head"]["sha"] != plan["sha"] or pr.get("auto_merge"):
+        raise ValueError("Prepared PR moved or is ineligible")
+    return pr
+
 
 c.maintainers_only()
 c.require_protection()
-commit = c.gh("commits/" + FIX)
-if commit["parents"][0]["sha"] != BASE or {f["filename"] for f in commit["files"]} != ALLOWED:
-    raise ValueError("Unexpected fix commit or file scope")
+for plan in PLANS:
+    commit = c.gh("commits/" + plan["sha"])
+    if len(commit["parents"]) != 1 or commit["parents"][0]["sha"] != plan["parent"] or {f["filename"] for f in commit["files"]} != plan["files"]:
+        raise ValueError("Prepared commit scope or parent changed")
 
-mode = os.environ["FIX_MODE"]
-if mode == "publish-fix":
-    c.gh("git/refs", "POST", {"ref": "refs/heads/" + BRANCH, "sha": FIX})
-    pr = c.gh("pulls", "POST", {"head": BRANCH, "base": "main", "draft": True,
-        "title": "Fix AI loop activation: repository settings endpoint",
-        "body": "The activation smoke test stops with HTTP 404 because the repository settings request has a trailing slash. Omit that slash for root requests and preserve nested resource paths.\n\nAdds two regression tests; all 22 local guard tests pass. No architecture or application changes.\n\nPrepared by Codex and published by GitHub Actions for independent human owner review. AI does not approve or merge this PR.\n\nThe loop remains disabled because OpenAI reports credit_balance_exhausted. A one-time operator-dispatched review-fix helper can evaluate this exact commit after human approval and successful CI, using the repaired controller and the same protected-path/human gate. It cannot merge, edit files, bypass protection, or make AI provider requests."})
-    c.dispatch_ci(pr)
-    print("Created reviewable draft PR:", pr["html_url"])
-elif mode == "review-fix":
-    prs = c.gh("pulls?state=open&head=" + c.REPO.split("/")[0] + ":" + BRANCH)
-    if len(prs) != 1 or prs[0]["head"]["sha"] != FIX:
-        raise ValueError("Expected one open PR on the exact fix head")
-    pr = c.gh("pulls/" + str(prs[0]["number"]))
-    if not c.approved(pr):
-        raise ValueError("Independent human approval on the exact head is required first")
-    if not c.ci_evidence(pr, {})[0]:
-        raise ValueError("Successful current-head CI is required first")
-    os.environ.update({"MODE": "review", "PR_NUMBER": str(pr["number"]), "AI_LOOP_ENABLED": "true"})
-    Path("operator-event.json").write_text(json.dumps({}))
-    os.environ["GITHUB_EVENT_PATH"] = "operator-event.json"
-    c.plan()
+if os.environ["FIX_MODE"] == "publish-free":
+    for plan in PLANS:
+        if plan["number"]:
+            pr = c.gh(f"pulls/{plan['number']}")
+            if not c.eligible(pr) or pr["head"]["ref"] != plan["branch"] or pr["head"]["sha"] not in (OLD, INFRA) or not pr["draft"]:
+                raise ValueError("Bootstrap PR no longer matches reviewed publication target")
+            if pr["head"]["sha"] == OLD:
+                c.gh("git/refs/heads/" + plan["branch"], "PATCH", {"sha": plan["sha"], "force": False})
+            c.gh(f"pulls/{plan['number']}", "PATCH", {"title": plan["title"], "body": plan["body"]})
+        else:
+            prs = c.gh("pulls?state=open&head=" + c.REPO.split("/")[0] + ":" + plan["branch"])
+            if not prs:
+                c.gh("git/refs", "POST", {"ref": "refs/heads/" + plan["branch"], "sha": plan["sha"]})
+                c.gh("pulls", "POST", {"head": plan["branch"], "base": "main", "draft": True, "title": plan["title"], "body": plan["body"]})
+        pr = checked_pr(plan)
+        c.status(pr, "pending", "Waiting for exact-head CI and actual local Codex attestation")
+        c.dispatch_ci(pr)
+        print("Prepared draft PR:", pr["html_url"])
+elif os.environ["FIX_MODE"] == "review-free":
+    for plan in PLANS:
+        pr = checked_pr(plan)
+        verdict = gate.local_verdict(pr, c.pages(f"issues/{pr['number']}/comments"))
+        files = c.changed_data(pr)
+        ci_ok, _ = c.ci_evidence(pr, {})
+        result, state, label = gate.evaluate(pr, files, verdict, ci_ok, c.approved(pr))
+        c.report(pr, result, state, label)
+        print("Verified exact head:", pr["number"], state)
 else:
-    raise ValueError("Unexpected helper mode")
+    raise ValueError("Unknown no-API operator mode")

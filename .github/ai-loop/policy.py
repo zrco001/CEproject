@@ -5,16 +5,16 @@ MAX_ATTEMPTS = 3
 MAX_FILES = 80
 MAX_BYTES = 160_000
 LABELS = {
-    "ai:enabled": ("5319e7", "Maintainer opted this PR into bounded Claude implementation/fixes"),
-    "ai:changes-requested": ("d93f0b", "CI or OpenAI requires changes on the current head"),
+    "ai:enabled": ("5319e7", "Maintainer opted this PR into bounded local subscription collaboration"),
+    "ai:changes-requested": ("d93f0b", "CI or local Codex review requires changes on the current head"),
     "ai:human-required": ("b60205", "Automation paused: sensitive scope, error, or exhausted budget"),
     "ai:ready-to-merge": ("0e8a16", "Current head passed CI and review; human must merge"),
 }
 
 
 def safe_path(path):
-    return (isinstance(path, str) and bool(path) and "\\" not in path
-            and not path.startswith("/") and all(p not in ("", ".", "..") for p in path.split("/")))
+    return (isinstance(path, str) and bool(path) and "\\" not in path and ":" not in path
+            and not path.startswith("/") and all(p not in ("", ".", "..") and not p.endswith((".", " ")) for p in path.split("/")))
 
 
 def protected(path):
