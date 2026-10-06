@@ -1,0 +1,5 @@
+# Every PR requires human ownership, including any new sensitive module.
+* @zrco001
+
+# Add a second trusted human owner before enforcing this rule for owner-authored PRs.
+# GitHub does not let a PR author approve their own PR.

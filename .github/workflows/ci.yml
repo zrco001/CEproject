@@ -1,22 +1,101 @@
 name: CI
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && format('CI / PR #{0} / {1}', inputs.pr_number, inputs.target_sha) || github.event.head_commit.message || github.event.pull_request.title || 'CI' }}
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**', 'codex/**']
   pull_request:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact 40-character PR head SHA to validate
+        type: string
+        required: true
+      pr_number:
+        description: Same-repository PR number for this SHA
+        type: string
+        required: true
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  target:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        id: target
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          script: |
+            if (context.eventName !== 'workflow_dispatch') {
+              core.setOutput('sha', context.payload.pull_request?.head.sha || context.sha);
+              return;
+            }
+            const sha = process.env.TARGET_SHA;
+            const number = process.env.PR_NUMBER;
+            if (!/^[0-9a-f]{40}$/.test(sha) || !/^[1-9][0-9]*$/.test(number)) {
+              throw new Error('Invalid explicit CI target');
+            }
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: Number(number)});
+            if (pr.state !== 'open' || pr.base.ref !== 'main' ||
+                pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` || pr.head.sha !== sha) {
+              throw new Error('PR closed, foreign, or stale; reject dispatched target');
+            }
+            core.setOutput('sha', sha);
+
+  ai-loop-tests:
+    needs: target
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.target.outputs.sha }}
+          persist-credentials: false
+      - name: Guardrail and orchestration regression tests
+        run: python -m unittest discover -s .github/ai-loop -p 'test_*.py' -v
+      - name: Install checksum-verified actionlint
+        shell: bash
+        run: |
+          version=1.7.12
+          base="https://github.com/rhysd/actionlint/releases/download/v$version"
+          cd "$RUNNER_TEMP"
+          curl --fail --location --silent --show-error "$base/actionlint_${version}_linux_amd64.tar.gz" -o actionlint.tar.gz
+          curl --fail --location --silent --show-error "$base/actionlint_${version}_checksums.txt" -o checksums.txt
+          expected=$(awk -v name="actionlint_${version}_linux_amd64.tar.gz" '$2 == name {print $1}' checksums.txt)
+          test -n "$expected"
+          echo "$expected  actionlint.tar.gz" | sha256sum --check --status
+          tar -xzf actionlint.tar.gz actionlint
+      - name: Validate workflow YAML, expressions, and permissions
+        run: '"$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes='
+      - name: Verify isolated Claude CLI installation (no model keys)
+        run: |
+          docker build -t ceproject-claude .github/ai-loop
+          docker run --rm --entrypoint claude ceproject-claude --version
+          docker run --rm --entrypoint claude ceproject-claude --help
+
   verify:
+    needs: target
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       TZ: UTC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.target.outputs.sha }}
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v4
 
@@ -44,10 +123,13 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
-    needs: verify
+    needs: [target, verify]
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.target.outputs.sha }}
+          persist-credentials: false
       - uses: docker/setup-buildx-action@v3
       - name: Build api image
         run: docker build -f apps/api/Dockerfile -t ceproject-api:ci .
