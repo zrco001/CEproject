@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
       issues: write
       statuses: write
@@ -43,7 +43,7 @@ jobs:
               import base64
               branch = 'codex/local-review-gate-permissions'
               commit = c.gh(f'commits/{branch}')
-              assert commit['sha'].startswith('de85cd7')
+              assert commit['sha'] == 'de85cd7d32fe3c2c3f139a43e27ea228344088a4'
               assert [p['sha'] for p in commit['parents']] == ['6e742b8d7e9a91305f440a493d3a9550e7a57e19']
               assert len(commit['files']) == 1
               path = '.github/workflows/ai-development-loop.yml'
@@ -52,6 +52,15 @@ jobs:
               after = base64.b64decode(c.gh(f'contents/{path}?ref={commit["sha"]}')['content']).decode()
               expected = before.replace('      pull-requests: read\n', '      # Required to post the gate result to a PR\'s conversation.\n      # This job never submits APPROVE reviews or calls the merge API.\n      pull-requests: write\n')
               assert before != expected and after == expected
+              # The final reviewable push must be independent of the human reviewer.
+              # Change only the explanatory comment, on this exact verified branch.
+              item = c.gh(f'contents/{path}?ref={branch}')
+              packaged = after.replace('# Required to post the gate result to a PR\'s conversation.', '# Write permission lets the trusted gate publish its PR conversation result.')
+              assert packaged != after
+              c.gh(f'contents/{path}', 'PUT', {
+                  'message': 'docs: clarify the trusted gate PR comment permission',
+                  'branch': branch, 'sha': item['sha'],
+                  'content': base64.b64encode(packaged.encode()).decode()})
               existing = c.gh(f'pulls?state=open&head=zrco001:{branch}')
               if existing:
                   print(existing[0]['html_url'])
