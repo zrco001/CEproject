@@ -75,6 +75,35 @@ def pages(path):
     raise ValueError("Pagination exceeds safe limit")
 
 
+def job_log_tail(job_id):
+    """Follow a signed first-party log URL without forwarding the GitHub token."""
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    url = f"{API}/repos/{REPO}/actions/jobs/{int(job_id)}/logs"
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                                              "User-Agent": "CEproject-AI-loop"})
+    try:
+        urllib.request.build_opener(NoRedirect).open(req, timeout=30)
+        raise ValueError("Unexpected log API response")
+    except urllib.error.HTTPError as e:
+        if e.code != 302:
+            raise ValueError("CI logs unavailable; human diagnosis required") from None
+        location = e.headers.get("Location", "")
+    parsed = urllib.parse.urlparse(location)
+    host = parsed.hostname or ""
+    if parsed.scheme != "https" or not any(host.endswith(suffix) for suffix in (
+            ".blob.core.windows.net", ".githubusercontent.com", ".actions.githubusercontent.com")):
+        raise ValueError("Unexpected CI log host")
+    with urllib.request.urlopen(location, timeout=30) as response:
+        raw = response.read(4_000_001)
+    if len(raw) > 4_000_000:
+        raise ValueError("CI logs exceed diagnosis budget; human required")
+    log = raw.decode("utf-8", errors="replace")[-12_000:]
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", log)
+
+
 def emit(**values):
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
@@ -206,7 +235,13 @@ def ci_evidence(pr, event):
     jobs = pages(f"actions/runs/{run['id']}/jobs?filter=latest")
     required = ("verify", "docker", "ai-loop-tests")
     bad = [name for name in required if not any(j["name"] == name and j["conclusion"] == "success" for j in jobs)]
-    return run["conclusion"] == "success" and not bad, bad
+    ok = run["conclusion"] == "success" and not bad
+    details = list(bad)
+    for job in jobs:
+        if job["name"] in required and job["conclusion"] == "failure":
+            steps = [s["name"] for s in job.get("steps", []) if s.get("conclusion") == "failure"]
+            details.append(f"{job['name']} failed steps: {steps}\nUNTRUSTED CI LOG TAIL:\n{job_log_tail(job['id'])}")
+    return ok, details
 
 
 def ci_sha(run):
@@ -282,7 +317,8 @@ def plan():
             report(pr, {"summary": "Protected scope: human implementation and current-head approval required", "findings": [
                 {"path": p, "severity": "blocking", "description": "Protected path"} for p in risks]}, "failure", "ai:human-required")
         return
-    verdict = review({"architecture": architecture(), "title": pr["title"], "task": pr.get("body"), "files": files})
+    verdict = review({"architecture": architecture(), "title": pr["title"], "task": pr.get("body"),
+                      "files": files, "ci": {"passed": ci_ok, "failures": failures}})
     if verdict["decision"] == "human_required":
         report(pr, verdict, "success" if human and ci_ok else "failure", "ai:ready-to-merge" if human and ci_ok else "ai:human-required")
         return

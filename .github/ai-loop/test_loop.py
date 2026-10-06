@@ -93,6 +93,17 @@ class OrchestrationTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertEqual(failed, ["docker", "ai-loop-tests"])
 
+    def test_failed_ci_supplies_actionable_steps_and_logs(self):
+        run = {"id": 1, "path": ".github/workflows/ci.yml", "event": "pull_request",
+               "head_sha": "a" * 40, "conclusion": "failure"}
+        jobs = [{"id": 12, "name": "verify", "conclusion": "failure",
+                 "steps": [{"name": "Test", "conclusion": "failure"}]}]
+        with patch.object(c, "pages", return_value=jobs), patch.object(c, "job_log_tail", return_value="specific regression"):
+            ok, failed = c.ci_evidence(pr(), {"workflow_run": run})
+            self.assertFalse(ok)
+            self.assertIn("Test", failed[-1])
+            self.assertIn("specific regression", failed[-1])
+
     def test_human_approval_must_match_head_and_latest_review(self):
         old = {"user": {"login": "human", "type": "User"}, "state": "APPROVED", "commit_id": "b" * 40}
         current = copy.deepcopy(old)
