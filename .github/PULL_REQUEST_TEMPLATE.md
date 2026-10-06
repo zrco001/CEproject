@@ -18,7 +18,14 @@ Human approval / ADR / Phase gate links:
 
 - [ ] Formatting, lint, typecheck, tests, build, Docker checks passed.
 - [ ] AI loop guardrail tests and workflow validation passed.
-- [ ] Current head has `ai/review-gate` success, or the documented bootstrap exception applies.
+- [ ] Current head has `ai/review-gate` success, with exact-head local Codex review recorded.
+
+## Local AI review
+
+<!-- Link the actual Codex review attestation for this exact SHA. No model API keys. -->
+
+- [ ] Claude used existing subscription quota with extra usage and auto reload OFF.
+- [ ] Codex reviewed the entire patch independently; no invented test or review result.
 
 ## Final human gate
 
