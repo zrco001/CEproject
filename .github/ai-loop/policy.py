@@ -58,6 +58,8 @@ def validate_changes(changes):
         raise ValueError("Only UTF-8 regular text files are supported")
     if sum(len((v or "").encode()) for v in changes.values()) > MAX_BYTES:
         raise ValueError("Changeset exceeds review budget")
+    if any(re.search(r"\bsk-(?:ant-|proj-|svcacct-)?[A-Za-z0-9_-]{16,}", v or "") for v in changes.values()):
+        raise ValueError("Possible provider credential in generated text; human required")
 
 
 def validate_verdict(result):

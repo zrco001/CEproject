@@ -45,6 +45,10 @@ class PolicyTests(unittest.TestCase):
             validate_verdict({"decision": "approve", "summary": "ok", "findings": [
                 {"path": "a", "severity": "blocking", "description": "bug"}]})
 
+    def test_credentials_in_generated_edits_rejected(self):
+        with self.assertRaises(ValueError):
+            validate_changes({"docs/a.md": "sk-ant-" + "x" * 40})
+
 
 class OrchestrationTests(unittest.TestCase):
     def test_stale_review_has_no_side_effect(self):

@@ -67,6 +67,9 @@ def export():
                 raise ValueError("Protected file changed; discard entire patch")
             changes[name] = (root / name).read_text(encoding="utf-8")
     validate_changes(changes)
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if key and any(key in (value or "") for value in changes.values()):
+        raise ValueError("Credential found in generated text; discard entire patch")
     Path("changes.json").write_text(json.dumps(changes, ensure_ascii=False), encoding="utf-8")
 
 
