@@ -1,0 +1,97 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens (shadcn/ui convention). Mobile first: touch targets ≥ 48px, CTA 56px,
+ * body text 16px to avoid iOS input zoom (ARCHITECTURE.md §9.4).
+ */
+:root {
+  --background: oklch(0.985 0.002 247);
+  --foreground: oklch(0.21 0.03 265);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.03 265);
+  --muted: oklch(0.96 0.005 247);
+  --muted-foreground: oklch(0.5 0.02 257);
+  --border: oklch(0.92 0.006 247);
+  --primary: oklch(0.47 0.16 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.95 0.01 250);
+  --secondary-foreground: oklch(0.25 0.03 265);
+  --accent: oklch(0.94 0.02 250);
+  --accent-foreground: oklch(0.25 0.03 265);
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.75 0.15 75);
+  --success: oklch(0.6 0.14 155);
+  --ring: oklch(0.47 0.16 255);
+  --radius: 0.75rem;
+  --bottom-nav-height: 4rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.17 0.02 265);
+    --foreground: oklch(0.96 0.005 247);
+    --card: oklch(0.21 0.025 265);
+    --card-foreground: oklch(0.96 0.005 247);
+    --muted: oklch(0.26 0.025 265);
+    --muted-foreground: oklch(0.72 0.02 257);
+    --border: oklch(0.3 0.025 265);
+    --primary: oklch(0.68 0.15 255);
+    --primary-foreground: oklch(0.17 0.02 265);
+    --secondary: oklch(0.27 0.025 265);
+    --secondary-foreground: oklch(0.96 0.005 247);
+    --accent: oklch(0.3 0.03 260);
+    --accent-foreground: oklch(0.96 0.005 247);
+    --ring: oklch(0.68 0.15 255);
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --font-sans: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    /* Never allow horizontal page scroll (規格 §三). */
+    overflow-x: hidden;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}

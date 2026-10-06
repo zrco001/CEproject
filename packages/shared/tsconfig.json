@@ -1,0 +1,9 @@
+{
+  "extends": "@ceproject/config/tsconfig/library.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

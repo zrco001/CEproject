@@ -1,0 +1,46 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# tooling / caches
+.turbo/
+.cache/
+coverage/
+tmp/
+
+# env (only .env.example with placeholders is committed)
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+
+# local database / storage volumes
+postgres-data/
+minio-data/
+
+# secrets
+*.pem
+*.key
+*.p12
+*.pfx
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
