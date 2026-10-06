@@ -33,7 +33,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      # Required to post the gate result to a PR's conversation.
+      # Write permission lets the trusted gate publish its PR conversation result.
       # This job never submits APPROVE reviews or calls the merge API.
       pull-requests: write
       issues: write
