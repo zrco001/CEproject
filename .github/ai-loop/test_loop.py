@@ -51,6 +51,29 @@ class PolicyTests(unittest.TestCase):
 
 
 class OrchestrationTests(unittest.TestCase):
+    def test_real_actions_jobs_envelope_supplies_ci_evidence(self):
+        run = {"id": 1, "path": ".github/workflows/ci.yml", "event": "pull_request",
+               "head_sha": "a" * 40, "conclusion": "success"}
+        envelope = {"total_count": 3, "jobs": [{"name": name, "conclusion": "success"}
+                     for name in ("verify", "docker", "ai-loop-tests")]}
+        with patch.object(c, "gh", return_value=envelope):
+            self.assertEqual(c.ci_evidence(pr(), {"workflow_run": run}), (True, []))
+
+    def test_wrapped_collection_paginates_without_losing_jobs(self):
+        first = [{"id": n} for n in range(100)]
+        with patch.object(c, "gh", side_effect=[{"total_count": 101, "jobs": first},
+                                               {"total_count": 101, "jobs": [{"id": 100}]}]) as gh:
+            self.assertEqual(len(c.pages("actions/runs/1/jobs?filter=latest", "jobs")), 101)
+            self.assertEqual(gh.call_count, 2)
+            self.assertIn("page=2", gh.call_args.args[0])
+
+    def test_wrong_collection_shape_never_passes_ci(self):
+        for result in ({"total_count": 0}, {"jobs": "not a list"}, {"jobs": []}):
+            with patch.object(c, "gh", return_value=result), self.assertRaises(ValueError):
+                c.pages("pulls")
+        with patch.object(c, "gh", return_value={"jobs": "bad"}), self.assertRaises(ValueError):
+            c.pages("actions/runs/1/jobs", "jobs")
+
     def test_repository_settings_url_has_no_trailing_slash(self):
         with patch.dict(os.environ, {"GH_TOKEN": "test-only"}), patch.object(c, "request") as request:
             c.gh("")
