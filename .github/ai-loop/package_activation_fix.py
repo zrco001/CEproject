@@ -4,15 +4,15 @@ import controller as c
 import local_review_gate as gate
 from policy import risk_paths
 
-INFRA = "f04465f458bf1f12dacddec53161920d9dbb3c7a"
-OLD = "87dc9e47e56a0a0effaa7c8da14cbfb97054ff98"
+INFRA = "33eb50da98973925883a661cea4183f216fdf8a8"
+OLD = "f04465f458bf1f12dacddec53161920d9dbb3c7a"
 SMOKE = "295c671f0068fa19cdbe02efa85499b86ab7d5da"
 BASE = "13695473a6e66f10552f5515806dbec9f85f8c1f"
 PLANS = [
     {"sha": INFRA, "parent": OLD, "branch": "codex/ai-settings-endpoint", "number": 3,
-     "files": {".github/PULL_REQUEST_TEMPLATE.md", ".github/ai-loop/local_claude.py", ".github/ai-loop/local_review_gate.py", ".github/ai-loop/policy.py", ".github/ai-loop/test_local_loop.py", ".github/workflows/ai-development-loop.yml", ".github/workflows/ci.yml", "CLAUDE.md", "docs/AI-DEVELOPMENT-LOOP.md"},
+     "files": {".github/ai-loop/controller.py", ".github/ai-loop/test_loop.py"},
      "title": "Use existing Claude/Codex subscriptions with no model API billing",
-     "body": "Claude implementation now runs locally with the existing Claude subscription. Codex independently reviews exported proposals and passes feedback directly to Claude; GitHub only verifies exact-head local review attestation, CI and human guardrails. Removes all model secrets/calls and cloud implementation jobs from the active workflow.\n\nAdds a bounded subscription-only local runner and 16 new guard tests (38 total passing locally). Preserves Architecture Approved v0.3 byte-for-byte, financial/security/migration stops, enforced main protection and manual final merge. Also fixes the repository settings URL that blocked activation.\n\nActual smoke: Claude Pro wrote a quickstart, Codex requested corrections, Claude revised it on attempt 2; a separate draft PR contains that documentation. No API inference, new credits or extra usage were used. Claude extra usage and auto reload are OFF; monthly extra spending limit is US$0.\n\nValidation: local 38 guard tests, actionlint and formatting passed. Full CI for this exact SHA is dispatched separately. Bootstrap gate remains human-required until independent human approval on this exact commit and successful CI. Prepared by Codex; Actions packages this draft so the owner can review independently. AI never approves or merges.\n\nAfter manual merge, enable the replacement AI Development Loop. Do not enable the old API workflow. Only AI_PROTECTION_READ_TOKEN remains in use (expires 2026-11-06); OpenAI/Anthropic API secrets are unused."},
+     "body": "Claude implementation now runs locally with the existing Claude subscription. Codex independently reviews exported proposals and passes feedback directly to Claude; GitHub only verifies exact-head local review attestation, CI and human guardrails. Removes all model secrets/calls and cloud implementation jobs from the active workflow.\n\nAdds a bounded subscription-only local runner and 16 new guard tests (41 total passing locally). Preserves Architecture Approved v0.3 byte-for-byte, financial/security/migration stops, enforced main protection and manual final merge. Also fixes the repository settings URL and the wrapped GitHub Actions jobs response that blocked activation; includes real API-envelope and pagination regression coverage.\n\nActual smoke: Claude Pro wrote a quickstart, Codex requested corrections, Claude revised it on attempt 2; a separate draft PR contains that documentation. No API inference, new credits or extra usage were used. Claude extra usage and auto reload are OFF; monthly extra spending limit is US$0.\n\nValidation: local 41 guard tests, actionlint and formatting passed. Full CI for this exact SHA is dispatched separately. Bootstrap gate remains human-required until independent human approval on this exact commit and successful CI. Prepared by Codex; Actions packages this draft so the owner can review independently. AI never approves or merges.\n\nAfter manual merge, enable the replacement AI Development Loop. Do not enable the old API workflow. Only AI_PROTECTION_READ_TOKEN remains in use (expires 2026-11-06); OpenAI/Anthropic API secrets are unused."},
     {"sha": SMOKE, "parent": BASE, "branch": "claude/local-smoke-issue-2", "number": None,
      "files": {"docs/LOCAL-DEVELOPMENT-QUICKSTART.md"},
      "title": "docs: local Claude Pro and Codex collaboration smoke",
@@ -53,7 +53,8 @@ if os.environ["FIX_MODE"] == "publish-free":
                 c.gh("pulls", "POST", {"head": plan["branch"], "base": "main", "draft": True, "title": plan["title"], "body": plan["body"]})
         pr = checked_pr(plan)
         c.status(pr, "pending", "Waiting for exact-head CI and actual local Codex attestation")
-        c.dispatch_ci(pr)
+        if not c.ci_evidence(pr, {})[0]:
+            c.dispatch_ci(pr)
         print("Prepared draft PR:", pr["html_url"])
 elif os.environ["FIX_MODE"] == "review-free":
     for plan in PLANS:

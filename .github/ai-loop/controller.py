@@ -66,10 +66,14 @@ def gh(path, method="GET", body=None):
     return request(root + (f"/{path}" if path else ""), method, body, os.environ["GH_TOKEN"])
 
 
-def pages(path):
+def pages(path, collection=None):
     values = []
     for page in range(1, 101):
         batch = gh(f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
+        if collection:
+            batch = batch.get(collection) if isinstance(batch, dict) else None
+        if not isinstance(batch, list):
+            raise ValueError("Unexpected GitHub collection response; evidence unavailable")
         values.extend(batch)
         if len(batch) < 100:
             return values
@@ -233,7 +237,7 @@ def ci_evidence(pr, event):
         return False, ["No completed CI for the current head; dispatch CI and retry review"]
     if run.get("path") != ".github/workflows/ci.yml":
         return False, ["Unrecognized CI workflow"]
-    jobs = pages(f"actions/runs/{run['id']}/jobs?filter=latest")
+    jobs = pages(f"actions/runs/{run['id']}/jobs?filter=latest", "jobs")
     required = ("verify", "docker", "ai-loop-tests")
     bad = [name for name in required if not any(j["name"] == name and j["conclusion"] == "success" for j in jobs)]
     ok = run["conclusion"] == "success" and not bad
