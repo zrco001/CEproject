@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   InvalidMoneyError,
+  RATE_SCALE,
   Money,
   Rate,
   calculateTax,
@@ -31,7 +32,7 @@ describe('Money', () => {
   });
 
   it('rounds HALF_UP only when asked', () => {
-    const value = Money.of('100').times(Rate.of('0.333333'));
+    const value = Money.of('100').times('0.333333');
     expect(value.toFixed(6)).toBe('33.333300');
     expect(value.round().toMoneyString()).toBe('33.33');
     expect(Money.of('2.345').round(2).toMoneyString()).toBe('2.35');
@@ -95,11 +96,44 @@ describe('MoneyString', () => {
   });
 });
 
-describe('Rate', () => {
-  it('validates format', () => {
+describe('Rate — NUMERIC(7, 4) representation', () => {
+  it.each(['0', '0.05', '0.0500', '1', '100', '999.9999', '0.0001', '12.5'])(
+    'accepts %s',
+    (value) => {
+      expect(() => Rate.of(value)).not.toThrow();
+    },
+  );
+
+  it.each([
+    ['1000', 'more than 3 integer digits'],
+    ['9999', 'more than 3 integer digits'],
+    ['0.12345', 'more than 4 fraction digits'],
+    ['123456789.123456', 'out of range in both directions'],
+    ['-0.05', 'negative'],
+    ['-1', 'negative'],
+    ['5%', 'percent sign'],
+    ['', 'empty'],
+    ['.5', 'missing integer part'],
+    ['1.', 'missing fraction digits'],
+    ['01', 'leading zero'],
+    ['1e-2', 'exponent notation'],
+    [' 0.05', 'whitespace'],
+  ])('rejects %s (%s)', (value) => {
+    expect(() => Rate.of(value)).toThrow(InvalidMoneyError);
+  });
+
+  it('serialises with the 4-digit persistence scale', () => {
     expect(Rate.of('0.05').toJSON()).toBe('0.0500');
-    expect(() => Rate.of('-0.05')).toThrow(InvalidMoneyError);
-    expect(() => Rate.of('5%')).toThrow(InvalidMoneyError);
+    expect(Rate.of('999.9999').toJSON()).toBe('999.9999');
+    expect(RATE_SCALE).toBe(4);
+  });
+
+  it('does not enforce domain limits such as rate ≤ 1', () => {
+    expect(Rate.of('1.5').toString()).toBe('1.5');
+  });
+
+  it('keeps Money at NUMERIC(18, 2) when multiplied by a rate', () => {
+    expect(Money.of('850000').times(Rate.of('0.05')).round().toMoneyString()).toBe('42500.00');
   });
 });
 

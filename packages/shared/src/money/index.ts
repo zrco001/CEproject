@@ -1,6 +1,7 @@
 export {
   InvalidMoneyError,
   MONEY_SCALE,
+  RATE_SCALE,
   Money,
   Rate,
   isMoneyString,

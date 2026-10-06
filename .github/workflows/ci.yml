@@ -2,12 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
   pull_request:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   verify:
@@ -16,11 +19,11 @@ jobs:
     env:
       TZ: UTC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -45,13 +48,27 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: verify
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      # CI-only placeholder credentials for throwaway containers. Never production secrets.
+      POSTGRES_PASSWORD: ci-placeholder-postgres-password
+      S3_ACCESS_KEY_ID: ci-placeholder-minio-user
+      S3_SECRET_ACCESS_KEY: ci-placeholder-minio-password
+      WEB_ORIGIN: http://localhost:3000
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build api image
-        run: docker build -f apps/api/Dockerfile -t ceproject-api:ci .
-      - name: Build web image
-        run: docker build -f apps/web/Dockerfile -t ceproject-web:ci .
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
       - name: Validate compose file
-        run: cp .env.example .env && docker compose config --quiet
+        run: docker compose --profile app config --quiet
+
+      - name: Build api + web images
+        run: docker compose --profile app build
+
+      - name: Runtime smoke test
+        run: sh scripts/ci/docker-smoke.sh
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile app down -v --remove-orphans

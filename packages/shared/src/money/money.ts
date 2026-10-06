@@ -62,13 +62,27 @@ const ROUNDING: Record<RoundingMode, Decimal.Rounding> = {
   UP: Decimal.ROUND_UP,
 };
 
-/** A ratio such as a tax rate (0.05) or retention rate (0.10). Stored as NUMERIC(7, 4). */
+/** Rate persistence scale: NUMERIC(7, 4). */
+export const RATE_SCALE = 4;
+
+/**
+ * NUMERIC(7, 4): non-negative, at most 3 integer digits and 4 fraction digits (0 – 999.9999).
+ * Domain limits (e.g. tax rate ≤ 1, retention rate ≤ 1) are validated by the owning domain, not here.
+ */
+const RATE_STRING_PATTERN = /^(0|[1-9]\d{0,2})(\.\d{1,4})?$/;
+
+/**
+ * A ratio such as a tax rate (0.05) or retention rate (0.10), stored as NUMERIC(7, 4).
+ * `Rate.of` only accepts values representable in that column without rounding.
+ */
 export class Rate {
   private constructor(private readonly value: MoneyDecimal) {}
 
   static of(input: string): Rate {
-    if (!/^(0|[1-9]\d*)(\.\d{1,6})?$/.test(input)) {
-      throw new InvalidMoneyError('Invalid rate format: expected a non-negative decimal string.');
+    if (!RATE_STRING_PATTERN.test(input)) {
+      throw new InvalidMoneyError(
+        'Invalid rate: expected a non-negative decimal with at most 3 integer and 4 fraction digits (NUMERIC(7, 4)).',
+      );
     }
     return new Rate(new MoneyDecimal(input));
   }
@@ -83,7 +97,7 @@ export class Rate {
   }
 
   toJSON(): string {
-    return this.value.toFixed(4);
+    return this.value.toFixed(RATE_SCALE);
   }
 }
 
