@@ -27,6 +27,9 @@ def probe(label, url, token, extra=None):
             message = details.get("message", "").lower()
             if "credit balance" in message and "low" in message:
                 print(f"{label}: provider reports insufficient credit balance")
+            if label.startswith("Anthropic"):
+                print("Anthropic error categories:", {term: term in message for term in
+                      ("credit", "balance", "billing", "api key", "x-api-key", "version", "permission")})
         except Exception:
             pass
         return None
