@@ -44,7 +44,7 @@ export function BottomNav() {
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex h-full min-h-12 flex-col items-center justify-center gap-0.5 text-xs',
+                  'flex h-full min-h-12 flex-col items-center justify-center gap-0.5 text-xs focus-visible:-outline-offset-2',
                   active ? 'text-primary font-semibold' : 'text-muted-foreground',
                 )}
               >

@@ -77,6 +77,29 @@ describe('responsive navigation breakpoint contract (§9.1)', () => {
   });
 });
 
+/**
+ * Links that sit against the viewport edge (bottom nav) or a scroll container (rail, sidebar,
+ * Quick Add list) draw the focus ring inset so it is never clipped. Measured in a real browser;
+ * this guards the class that implements it.
+ */
+describe('focus ring is inset on edge-adjacent links', () => {
+  const INSET = 'focus-visible:-outline-offset-2';
+
+  it('applies to bottom navigation, icon rail and full sidebar links', () => {
+    renderShell('/');
+    const bottom = screen.getByRole('navigation', { name: '主要導覽' });
+    const links = [
+      ...within(bottom).getAllByRole('link'),
+      ...within(rail()).getAllByRole('link'),
+      ...within(fullSidebar()).getAllByRole('link'),
+    ];
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link.className.split(' '), link.textContent).toContain(INSET);
+    }
+  });
+});
+
 describe('active navigation state', () => {
   it.each([
     ['/', '首頁', 'Dashboard', 'Dashboard'],

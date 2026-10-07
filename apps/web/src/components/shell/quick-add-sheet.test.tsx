@@ -130,3 +130,51 @@ describe('Quick Add sheet interactions', () => {
     }
   });
 });
+
+describe('Quick Add keyboard-only operation', () => {
+  it('opens with Enter, keeps Tab and Shift+Tab inside the sheet, and restores focus on Escape', async () => {
+    const user = userEvent.setup();
+    renderShell();
+    const trigger = bottomNavTrigger();
+    trigger.focus();
+
+    await user.keyboard('{Enter}');
+    const dialog = screen.getByRole('dialog', { name: '新增' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    // The list scrolls, so item focus rings are drawn inset to avoid clipping.
+    for (const link of within(dialog).getAllByRole('link')) {
+      expect(link.className.split(' ')).toContain('focus-visible:-outline-offset-2');
+    }
+
+    // 8 items + close button: more presses than stops proves the focus loops inside.
+    const forward = new Set<Element | null>();
+    for (let i = 0; i < 20; i++) {
+      await user.tab();
+      expect(dialog.contains(document.activeElement)).toBe(true);
+      forward.add(document.activeElement);
+    }
+    expect(forward.size).toBe(9);
+
+    for (let i = 0; i < 20; i++) {
+      await user.tab({ shift: true });
+      expect(dialog.contains(document.activeElement)).toBe(true);
+    }
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('opens with Space from a sidebar trigger and restores focus there', async () => {
+    const user = userEvent.setup();
+    renderShell();
+    const [trigger] = sidebarTriggers();
+    trigger!.focus();
+
+    await user.keyboard(' ');
+    expect(screen.getByRole('dialog', { name: '新增' })).toBeTruthy();
+
+    await user.keyboard('{Escape}');
+    expect(document.activeElement).toBe(trigger);
+  });
+});

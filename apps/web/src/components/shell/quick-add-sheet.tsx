@@ -41,7 +41,7 @@ export function QuickAddSheet() {
                 onClick={() => {
                   setOpen(false);
                 }}
-                className="active:bg-accent flex min-h-14 items-center gap-4 rounded-xl px-3 py-2"
+                className="active:bg-accent flex min-h-14 items-center gap-4 rounded-xl px-3 py-2 focus-visible:-outline-offset-2"
               >
                 <span className="bg-secondary text-primary flex size-11 shrink-0 items-center justify-center rounded-xl">
                   <item.icon aria-hidden className="size-6" />

@@ -75,7 +75,7 @@ export function Sidebar() {
                 href={first.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-center text-[11px] leading-tight',
+                  'flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-center text-[11px] leading-tight focus-visible:-outline-offset-2',
                   active
                     ? 'bg-accent text-primary font-semibold'
                     : 'text-muted-foreground active:bg-accent',
@@ -107,7 +107,7 @@ export function Sidebar() {
                       href={item.href}
                       aria-current={active ? 'page' : undefined}
                       className={cn(
-                        'flex min-h-12 items-center gap-3 rounded-xl px-3 text-[15px]',
+                        'flex min-h-12 items-center gap-3 rounded-xl px-3 text-[15px] focus-visible:-outline-offset-2',
                         active
                           ? 'bg-accent text-primary font-semibold'
                           : 'text-foreground active:bg-accent',
