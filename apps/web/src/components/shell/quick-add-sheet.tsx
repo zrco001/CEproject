@@ -14,11 +14,21 @@ import { useQuickAdd } from './quick-add-context';
 
 /** 「新增」 sheet with 56px rows reachable by thumb (§9.1). */
 export function QuickAddSheet() {
-  const { open, setOpen } = useQuickAdd();
+  const { open, setOpen, triggerRef } = useQuickAdd();
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetContent>
+      <SheetContent
+        // The sheet is opened by custom buttons rather than a Radix Trigger, so Radix cannot
+        // restore focus itself; send it back to whichever control opened the sheet.
+        onCloseAutoFocus={(event) => {
+          const trigger = triggerRef.current;
+          if (trigger?.isConnected) {
+            event.preventDefault();
+            trigger.focus();
+          }
+        }}
+      >
         <SheetHeader>
           <SheetTitle>新增</SheetTitle>
           <SheetDescription>選擇要建立的項目</SheetDescription>

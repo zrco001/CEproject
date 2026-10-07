@@ -9,7 +9,7 @@ import { useQuickAdd } from './quick-add-context';
 /** Mobile-only bottom navigation (< 768px) with the centre 「新增」 CTA (§9.1). */
 export function BottomNav() {
   const pathname = usePathname();
-  const { open, setOpen } = useQuickAdd();
+  const { open, openFrom } = useQuickAdd();
 
   return (
     <nav
@@ -25,8 +25,8 @@ export function BottomNav() {
                   type="button"
                   aria-haspopup="dialog"
                   aria-expanded={open}
-                  onClick={() => {
-                    setOpen(true);
+                  onClick={(event) => {
+                    openFrom(event.currentTarget);
                   }}
                   className="bg-primary text-primary-foreground flex size-14 -translate-y-3 flex-col items-center justify-center rounded-full shadow-lg active:scale-95"
                 >

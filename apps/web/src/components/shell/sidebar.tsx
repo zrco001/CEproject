@@ -3,6 +3,7 @@
 import { Plus } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import type { MouseEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { SIDEBAR_GROUPS, isLinkActive, matchesPath, pathOf } from './navigation';
@@ -14,9 +15,9 @@ import { useQuickAdd } from './quick-add-context';
  */
 export function Sidebar() {
   const pathname = usePathname();
-  const { setOpen } = useQuickAdd();
-  const openQuickAdd = (): void => {
-    setOpen(true);
+  const { open, openFrom } = useQuickAdd();
+  const openQuickAdd = (event: MouseEvent<HTMLButtonElement>): void => {
+    openFrom(event.currentTarget);
   };
 
   return (
@@ -37,6 +38,7 @@ export function Sidebar() {
           className="w-full px-2 lg:hidden"
           aria-label="新增"
           aria-haspopup="dialog"
+          aria-expanded={open}
           onClick={openQuickAdd}
         >
           <Plus />
@@ -45,6 +47,7 @@ export function Sidebar() {
           size="cta"
           className="hidden w-full lg:inline-flex"
           aria-haspopup="dialog"
+          aria-expanded={open}
           onClick={openQuickAdd}
         >
           <Plus />
