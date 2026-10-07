@@ -1,0 +1,22 @@
+{
+  "name": "ceproject-gate0-poc",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Phase 2 Gate 0 disposable PoC (ADR-34 / §11.2). NOT the production schema.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "gate0": "node scripts/run-gate0.mjs"
+  },
+  "dependencies": {
+    "@prisma/client": "7.10.0",
+    "pg": "8.23.1",
+    "prisma": "7.10.0"
+  },
+  "allowScripts": {
+    "@prisma/engines@7.10.0": true
+  }
+}
