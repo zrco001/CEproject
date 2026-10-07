@@ -31,10 +31,10 @@ export function Sidebar() {
         </span>
       </div>
 
-      <div className="px-3 pb-3">
+      <div className="px-2 pb-3 lg:px-3">
         <Button
-          size="icon"
-          className="w-full lg:hidden"
+          size="cta"
+          className="w-full px-2 lg:hidden"
           aria-label="新增"
           aria-haspopup="dialog"
           onClick={openQuickAdd}
@@ -42,6 +42,7 @@ export function Sidebar() {
           <Plus />
         </Button>
         <Button
+          size="cta"
           className="hidden w-full lg:inline-flex"
           aria-haspopup="dialog"
           onClick={openQuickAdd}
