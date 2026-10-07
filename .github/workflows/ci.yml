@@ -116,6 +116,14 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Gate 0 PoC offline tests only (guard, strategy, registry, TC-16 fixture). No database is
+      # started here; the disposable-DB run stays in the manual gate0-poc workflow.
+      - name: Gate 0 PoC offline tests (no database)
+        working-directory: poc/gate-0
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
   docker:
     runs-on: ubuntu-latest
     needs: [target, verify]
