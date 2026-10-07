@@ -26,7 +26,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      pull-requests: read
+      # Required for publishing the trusted gate result in the PR conversation.
+      # The fixed script never submits APPROVE reviews or calls the merge API.
+      pull-requests: write
       issues: write
       statuses: write
       actions: read
