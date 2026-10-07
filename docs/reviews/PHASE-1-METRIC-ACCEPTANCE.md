@@ -1,7 +1,9 @@
 # Phase 1 Metric Status Acceptance — P1-09
 
-**範圍**：§3.4 全部指標對照，確認每個指標對應 `METRIC_STATUS` 鍵、衍生依賴，或明確標注無 status 欄位。  
-**基礎提交**：`c424745c730afa6cfd3376c69d4a7a315794876f`  
+**範圍**：§3.4 全部指標對照，確認每個指標對應 `METRIC_STATUS` 鍵、衍生依賴，或明確標注無 status 欄位。
+
+**基礎提交**：`c424745c730afa6cfd3376c69d4a7a315794876f`
+
 **實作狀態**：Claude 本機提案已由 Codex 審閱並套用；驗證紀錄見文末。最終 PR 批准與合併仍由人工執行。
 
 ---
@@ -124,8 +126,10 @@
 
 ### 測試驗收狀態
 
-測試由 Claude 撰寫，**未由 Claude 執行**。Codex 已獨立核對完整差異與 §3.4 語意，並完成下列本機驗證：  
-泛型分類迴圈測試（現有）自動覆蓋全部 32 個 `METRIC_STATUS` 鍵，含三個新增項。  
+測試由 Claude 撰寫，**未由 Claude 執行**。Codex 已獨立核對完整差異與 §3.4 語意，並完成下列本機驗證：
+
+泛型分類迴圈測試（現有）自動覆蓋全部 32 個 `METRIC_STATUS` 鍵，含三個新增項。
+
 新增四項具名測試**僅驗證 metadata 定義**（conditions 陣列等值、changeOrder status 集合、RetentionRelease 白名單、來源優先序字串），不涉及金額計算或 runtime 日期選擇。
 
 - 格式、lint、typecheck 通過；shared 132、API 20、web 15、config 7，共 174 項測試通過，其中 metric-status 為 42 項。
