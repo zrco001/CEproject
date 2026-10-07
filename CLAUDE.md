@@ -57,6 +57,19 @@ phase implementation reports under `docs/reviews/` when requested.
 
 See `docs/AI-DEVELOPMENT-LOOP.md` for activation, attempt limits, and human intervention.
 
+## Single-maintainer merge gate
+
+CEproject uses a single human maintainer. Ordinary changes need exact-head Codex review and CI;
+the human clicks Merge in GitHub. Claude, Codex and Actions must not merge or enable auto-merge.
+GitHub self-approval is not required. CODEOWNERS remains an ownership map.
+
+Sensitive changes still require a separately approved plan and supervised implementation before
+work starts. After reviewing the exact completed head, the repository owner records explicit
+approval with `<!-- human-scope-approval -->` as described in the development-loop document.
+That record acknowledges the supervised patch; it never authorizes automated protected edits.
+AI must not generate a human approval on its own, reuse an approval for another head, or treat
+an ordinary task, label or AI review as sensitive-scope approval. Blocking findings always stop.
+
 ## Subscription-only collaboration
 
 Use the existing Claude subscription login; never use API keys or switch to API billing.
