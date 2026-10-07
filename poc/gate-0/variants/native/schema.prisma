@@ -1,0 +1,64 @@
+// Phase 2 Gate 0 PoC — G0-8 variant (TC-23 / TC-24). NOT the production schema.
+// Declares the composite (organizationId, xId) relations natively in Prisma, to record whether
+// Prisma 7.10.0 accepts them (required and optional) and which referential actions it emits.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../../generated/native"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PocFeeBearer {
+  COMPANY
+  COUNTERPARTY
+}
+
+model PocOrg {
+  id          String          @id
+  vendors     PocVendor[]
+  payments    PocPayment[]
+  allocations PocAllocation[]
+}
+
+model PocVendor {
+  id             String       @id
+  organizationId String
+  organization   PocOrg       @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  payments       PocPayment[]
+
+  @@unique([organizationId, id], map: "poc_vendor_org_id_key")
+}
+
+model PocPayment {
+  id                  String          @id
+  organizationId      String
+  organization        PocOrg          @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  vendorId            String?
+  // TC-24: optional composite relation where organizationId is required and vendorId is nullable.
+  vendor              PocVendor?      @relation(fields: [organizationId, vendorId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "poc_payment_vendor_id_org_fkey")
+  feeBearer           PocFeeBearer
+  paymentAmount       Decimal         @db.Decimal(18, 2)
+  feeAmount           Decimal         @db.Decimal(18, 2)
+  bankOutflowAmount   Decimal         @db.Decimal(18, 2)
+  payeeReceivedAmount Decimal         @db.Decimal(18, 2)
+  allocations         PocAllocation[]
+
+  @@unique([organizationId, id], map: "poc_payment_org_id_key")
+}
+
+model PocAllocation {
+  id             String     @id
+  organizationId String
+  organization   PocOrg     @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  paymentId      String
+  // TC-23: required composite relation.
+  payment        PocPayment @relation(fields: [organizationId, paymentId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "poc_allocation_payment_id_org_fkey")
+  targetKey      String
+  amount         Decimal    @db.Decimal(18, 2)
+  voidedAt       DateTime?  @db.Timestamptz(3)
+  voidedById     String?
+  voidReason     String?
+}

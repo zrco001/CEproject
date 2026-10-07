@@ -1,0 +1,109 @@
+# Phase 2 Gate 0 — Prisma manual constraint PoC (ADR-34 / ARCHITECTURE.md §11.2).
+# Manual dispatch only. Runs against a throwaway PostgreSQL container on the runner
+# (--rm, tmpfs data, 127.0.0.1:55432) and never against any existing database.
+# Plan: docs/reviews/PHASE-2-GATE-0-PLAN.md
+name: Gate 0 PoC (disposable DB)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type exactly: RUN GATE0 ON DISPOSABLE DB ONLY'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate0-poc
+  cancel-in-progress: false
+
+jobs:
+  gate0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GATE0_POSTGRES_IMAGE: postgres:16.15-alpine
+      # Throwaway placeholder credentials for a container that exists only for this job.
+      GATE0_DB_USER: gate0
+      GATE0_DB_PASSWORD: gate0-disposable-placeholder
+      GATE0_MAIN_URL: postgresql://gate0:gate0-disposable-placeholder@127.0.0.1:55432/gate0_main
+      GATE0_SHADOW_URL: postgresql://gate0:gate0-disposable-placeholder@127.0.0.1:55432/gate0_shadow
+      GATE0_FRESH_URL: postgresql://gate0:gate0-disposable-placeholder@127.0.0.1:55432/gate0_fresh
+      GATE0_NATIVE_URL: postgresql://gate0:gate0-disposable-placeholder@127.0.0.1:55432/gate0_native
+    defaults:
+      run:
+        working-directory: poc/gate-0
+    steps:
+      - name: Require explicit confirmation
+        working-directory: .
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "RUN GATE0 ON DISPOSABLE DB ONLY" ]; then
+            echo "::error::Confirmation text does not match. Nothing was started."
+            exit 1
+          fi
+          echo "GATE0_DISPOSABLE_CONFIRMED=true" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install pinned PoC dependencies (isolated from the pnpm workspace)
+        run: npm ci --no-audit --no-fund
+
+      - name: Offline guard and definition tests
+        run: npm test
+
+      - name: Start disposable PostgreSQL (tmpfs, --rm, 127.0.0.1:55432)
+        run: |
+          docker run --detach --rm --name ceproject-gate0-pg \
+            --env POSTGRES_USER="$GATE0_DB_USER" \
+            --env POSTGRES_PASSWORD="$GATE0_DB_PASSWORD" \
+            --env POSTGRES_DB=gate0_main \
+            --tmpfs /var/lib/postgresql/data:rw \
+            --publish 127.0.0.1:55432:5432 \
+            "$GATE0_POSTGRES_IMAGE"
+          for _ in $(seq 1 60); do
+            if docker exec ceproject-gate0-pg pg_isready -U "$GATE0_DB_USER" -d gate0_main >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec ceproject-gate0-pg pg_isready -U "$GATE0_DB_USER" -d gate0_main
+          for db in gate0_shadow gate0_fresh gate0_native; do
+            docker exec ceproject-gate0-pg psql -U "$GATE0_DB_USER" -d gate0_main -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
+          done
+          docker exec ceproject-gate0-pg psql -U "$GATE0_DB_USER" -d gate0_main -At -c "SELECT version()"
+
+      - name: Run Gate 0 PoC (stops at the first failure)
+        run: npm run gate0
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gate0-report
+          path: |
+            poc/gate-0/out/gate0-report.md
+            poc/gate-0/out/gate0-report.json
+            poc/gate-0/out/work/prisma/migrations/**
+            poc/gate-0/out/work/variants/native/migrations/**
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Tear down disposable PostgreSQL
+        if: always()
+        run: |
+          docker stop ceproject-gate0-pg || true
+          if docker ps -a --format '{{.Names}}' | grep -qx ceproject-gate0-pg; then
+            echo "::error::Disposable container still exists after stop."
+            exit 1
+          fi
+          echo "Disposable container and its tmpfs data are gone."

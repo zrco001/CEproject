@@ -1,0 +1,5 @@
+# Gate 0 PoC run output and generated clients (never committed)
+out/
+generated/
+.env
+.env.*

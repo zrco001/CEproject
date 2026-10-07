@@ -1,0 +1,62 @@
+// Phase 2 Gate 0 PoC (ADR-34 / ARCHITECTURE.md §11.2) — NOT the production schema.
+// Disposable verification of Prisma + manual constraints. Never apply outside the
+// guarded disposable database (see scripts/guard.mjs).
+//
+// "Hybrid" style (§6.5 rule 7): Prisma declares single-column relations for client typing;
+// the composite (organizationId, xId) foreign keys, composite unique targets, CHECK
+// constraints and the partial unique index are manual SQL appended to the migration.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PocFeeBearer {
+  COMPANY
+  COUNTERPARTY
+}
+
+model PocOrg {
+  id          String          @id
+  vendors     PocVendor[]
+  payments    PocPayment[]
+  allocations PocAllocation[]
+}
+
+model PocVendor {
+  id             String       @id
+  organizationId String
+  organization   PocOrg       @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  payments       PocPayment[]
+}
+
+model PocPayment {
+  id                  String          @id
+  organizationId      String
+  organization        PocOrg          @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  vendorId            String?
+  vendor              PocVendor?      @relation(fields: [vendorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  feeBearer           PocFeeBearer
+  paymentAmount       Decimal         @db.Decimal(18, 2)
+  feeAmount           Decimal         @db.Decimal(18, 2)
+  bankOutflowAmount   Decimal         @db.Decimal(18, 2)
+  payeeReceivedAmount Decimal         @db.Decimal(18, 2)
+  allocations         PocAllocation[]
+}
+
+model PocAllocation {
+  id             String     @id
+  organizationId String
+  organization   PocOrg     @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  paymentId      String
+  payment        PocPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targetKey      String
+  amount         Decimal    @db.Decimal(18, 2)
+  voidedAt       DateTime?  @db.Timestamptz(3)
+  voidedById     String?
+  voidReason     String?
+}
