@@ -11,6 +11,7 @@ import {
   NATIVE_VARIANT_NAMES,
   compareWithRegistry,
   auditForeignKeyActions,
+  normalizeCheck,
 } from '../scripts/registry.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,6 +44,16 @@ describe('committed migration', () => {
       assert.match(fk, /ON UPDATE RESTRICT/);
     }
     assert.doesNotMatch(initSql, /CASCADE|SET NULL|SET DEFAULT/i);
+  });
+
+  it('registry CHECK conditions are identical to the CHECK text in the migration', () => {
+    for (const entry of MANUAL_CONSTRAINTS.filter((c) => c.kind === 'check')) {
+      const match = new RegExp(`ADD CONSTRAINT "${entry.name}" CHECK ([\\s\\S]*?);\\n`).exec(
+        initSql,
+      );
+      assert.ok(match, `${entry.name} not found as a CHECK in the migration`);
+      assert.equal(normalizeCheck(match[1]), normalizeCheck(entry.condition), entry.name);
+    }
   });
 
   it('keeps the partial unique index predicate', () => {
@@ -87,7 +98,7 @@ describe('schemas', () => {
 });
 
 describe('test cases', () => {
-  it('cover TC-01..TC-15 (TC-15 split into a/b/c)', () => {
+  it('cover TC-01..TC-15 (TC-06 and TC-15 split into sub-cases)', () => {
     const ids = CASES.map((c) => c.id);
     const expected = [
       'TC-01',
@@ -96,6 +107,8 @@ describe('test cases', () => {
       'TC-04',
       'TC-05',
       'TC-06',
+      'TC-06b',
+      'TC-06c',
       'TC-07',
       'TC-08',
       'TC-09',
@@ -164,10 +177,12 @@ describe('registry comparison (synthetic catalog)', () => {
         on_delete: 'r',
       },
       {
+        // PostgreSQL-style deparse: extra parentheses and enum casts.
         name: 'poc_payment_fee_bearer_amounts_check',
         type: 'c',
         table: 'PocPayment',
-        definition: 'CHECK (...)',
+        definition:
+          'CHECK (((("feeBearer" = \'COMPANY\'::"PocFeeBearer") AND ("bankOutflowAmount" = ("paymentAmount" + "feeAmount")) AND ("payeeReceivedAmount" = "paymentAmount")) OR (("feeBearer" = \'COUNTERPARTY\'::"PocFeeBearer") AND ("feeAmount" < "paymentAmount") AND ("bankOutflowAmount" = "paymentAmount") AND ("payeeReceivedAmount" = ("paymentAmount" - "feeAmount")))))',
       },
       {
         name: 'poc_allocation_amount_positive_check',
@@ -179,7 +194,8 @@ describe('registry comparison (synthetic catalog)', () => {
         name: 'poc_allocation_void_fields_check',
         type: 'c',
         table: 'PocAllocation',
-        definition: 'CHECK (...)',
+        definition:
+          'CHECK (((("voidedAt" IS NULL) = ("voidedById" IS NULL)) AND (("voidedAt" IS NULL) = ("voidReason" IS NULL))))',
       },
     ],
     indexes: [
@@ -225,6 +241,46 @@ describe('registry comparison (synthetic catalog)', () => {
     ]);
     assert.equal(auditForeignKeyActions(cascading).ok, false);
   });
+
+  // Regression tests for Codex review of bf06980, finding 3: a CHECK that keeps its name and
+  // type but loses or changes a condition must not pass.
+  const withCheck = (name, definition) => ({
+    ...catalog,
+    constraints: catalog.constraints.map((c) => (c.name === name ? { ...c, definition } : c)),
+  });
+  const weakened = {
+    'void fields without the voidReason condition': [
+      'poc_allocation_void_fields_check',
+      'CHECK ((("voidedAt" IS NULL) = ("voidedById" IS NULL)))',
+    ],
+    'void fields with AND weakened to OR': [
+      'poc_allocation_void_fields_check',
+      'CHECK (((("voidedAt" IS NULL) = ("voidedById" IS NULL)) OR (("voidedAt" IS NULL) = ("voidReason" IS NULL))))',
+    ],
+    'fee bearer without "feeAmount" < "paymentAmount"': [
+      'poc_payment_fee_bearer_amounts_check',
+      'CHECK (((("feeBearer" = \'COMPANY\'::"PocFeeBearer") AND ("bankOutflowAmount" = ("paymentAmount" + "feeAmount")) AND ("payeeReceivedAmount" = "paymentAmount")) OR (("feeBearer" = \'COUNTERPARTY\'::"PocFeeBearer") AND ("bankOutflowAmount" = "paymentAmount") AND ("payeeReceivedAmount" = ("paymentAmount" - "feeAmount")))))',
+    ],
+    'fee bearer reduced to the COMPANY branch': [
+      'poc_payment_fee_bearer_amounts_check',
+      'CHECK ((("feeBearer" = \'COMPANY\'::"PocFeeBearer") AND ("bankOutflowAmount" = ("paymentAmount" + "feeAmount")) AND ("payeeReceivedAmount" = "paymentAmount")))',
+    ],
+    'amount allowing zero': [
+      'poc_allocation_amount_positive_check',
+      'CHECK ((amount >= (0)::numeric))',
+    ],
+    'CHECK replaced by an always-true condition': [
+      'poc_allocation_amount_positive_check',
+      'CHECK (true)',
+    ],
+  };
+  for (const [label, [name, definition]] of Object.entries(weakened)) {
+    it(`flags a weakened CHECK: ${label}`, () => {
+      const result = compareWithRegistry(withCheck(name, definition));
+      assert.equal(result.ok, false);
+      assert.deepEqual(result.mismatched, [name]);
+    });
+  }
 
   it('flags a partial index that lost its predicate', () => {
     const noPredicate = {

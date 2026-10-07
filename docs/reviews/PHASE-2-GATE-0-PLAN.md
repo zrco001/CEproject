@@ -147,14 +147,14 @@ DB、migration 與 reset 屬於 `CLAUDE.md` 規定的「必須停下等人核准
 
 ### G0-1 CHECK constraint
 
-| TC    | 情境                                                                          | 預期                                            |
-| ----- | ----------------------------------------------------------------------------- | ----------------------------------------------- |
-| TC-01 | COMPANY：payment 100000、fee 30、bankOutflow 100030、payeeReceived 100000     | INSERT 成功                                     |
-| TC-02 | COMPANY：bankOutflow 100000（少算 fee）                                       | `23514`，`poc_payment_fee_bearer_amounts_check` |
-| TC-03 | COUNTERPARTY：payment 100000、fee 30、bankOutflow 100000、payeeReceived 99970 | INSERT 成功                                     |
-| TC-04 | COUNTERPARTY：fee ≥ payment                                                   | `23514`                                         |
-| TC-05 | Allocation amount = 0                                                         | `23514`，`poc_allocation_amount_positive_check` |
-| TC-06 | Allocation 只設定 `voidedAt`，沒有 `voidedById`、`voidReason`                 | `23514`，`poc_allocation_void_fields_check`     |
+| TC    | 情境                                                                                                                                                          | 預期                                            |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| TC-01 | COMPANY：payment 100000、fee 30、bankOutflow 100030、payeeReceived 100000                                                                                     | INSERT 成功                                     |
+| TC-02 | COMPANY：bankOutflow 100000（少算 fee）                                                                                                                       | `23514`，`poc_payment_fee_bearer_amounts_check` |
+| TC-03 | COUNTERPARTY：payment 100000、fee 30、bankOutflow 100000、payeeReceived 99970                                                                                 | INSERT 成功                                     |
+| TC-04 | COUNTERPARTY：fee ≥ payment                                                                                                                                   | `23514`                                         |
+| TC-05 | Allocation amount = 0                                                                                                                                         | `23514`，`poc_allocation_amount_positive_check` |
+| TC-06 | 作廢欄位不完整：(a) 只有 `voidedAt`；(b) 有 `voidedAt`、`voidedById` 但缺 `voidReason`（TC-06b）；(c) 有 `voidedById`、`voidReason` 但缺 `voidedAt`（TC-06c） | `23514`，`poc_allocation_void_fields_check`     |
 
 ### G0-2 Partial unique index
 
@@ -184,9 +184,9 @@ DB、migration 與 reset 屬於 `CLAUDE.md` 規定的「必須停下等人核准
 
 ### G0-5 `migrate reset`（只限拋棄式 DB）
 
-| TC    | 情境                                                            | 預期                             |
-| ----- | --------------------------------------------------------------- | -------------------------------- |
-| TC-18 | 對 `gate0_main` 執行 reset 後查詢 registry，並重跑 TC-01～TC-15 | 8 條全部存在；測試結果與 S4 相同 |
+| TC    | 情境                                                            | 預期                                                                                                                                                                                |
+| ----- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TC-18 | 對 `gate0_main` 執行 reset 後查詢 registry，並重跑 TC-01～TC-15 | 8 條全部存在；測試結果與 S4 相同；且有重建證據：reset 前寫入的合成標記列消失、所有 `Poc*` 表的 OID 都改變、每個 migration 的完成時間都晚於 reset 前快照。只有 reset 回傳 0 不算通過 |
 
 ### G0-6 `migrate deploy`（乾淨 DB）
 
@@ -218,7 +218,13 @@ S6、S7、S8 都使用同一組唯讀查詢：
 - 查 `pg_constraint`（`conname`、`contype`、`pg_get_constraintdef(oid)`）。
 - 查 `pg_indexes`（`indexname`、`indexdef`，確認含 `WHERE ("voidedAt" IS NULL)`）。
 
-兩者都只篩選 `Poc*` 表，並與 registry 逐條比對名稱與定義。
+兩者都只篩選 `Poc*` 表，並與 registry 逐條比對名稱與定義。 CHECK 約束比對實際條件：把 `pg_get_constraintdef` 與 registry 的條件都去除型別轉換、括號、引號與空白差異後，必須完全相同；只比名稱與類型不算通過。
+
+### 共用：執行有效性規則（Codex 驗收 `bf06980` 後加入）
+
+- 任何指令發生 spawn 錯誤、逾時、被 signal 終止，或沒有 exit status，一律判定失敗並停止。
+- 每個指令只接受明確列出的 exit code。一般指令只接受 0；`migrate diff --exit-code` 只接受 0（無差異）或 2（有差異）；`prisma validate`（TC-23/24）只接受 0，或「1 且輸出含驗證錯誤」。
+- Prisma 可能靜默失敗並回傳 0（ADR-034 發現 1），因此 S8 先執行正向對照：同一來源對空 schema 的 diff 必須回傳 2，之後的 0 才被採信為「無 drift」。
 
 ---
 

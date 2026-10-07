@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { CASES, FK_CASE_IDS, runCases } from './cases.mjs';
 import { assertDisposableDatabase, assertDisposableEnvironment, redactUrl } from './guard.mjs';
+import { DIFF_EXIT_CODES, checkProcessResult } from './process-result.mjs';
+import { RESET_MARKER_ID, assessResetEvidence, snapshotForReset } from './reset-evidence.mjs';
 import {
   MANUAL_CONSTRAINTS,
   NATIVE_VARIANT_NAMES,
@@ -76,8 +78,12 @@ async function withClient(url, fn) {
   }
 }
 
-/** Runs the pinned Prisma CLI in the working copy with an explicit, guarded environment. */
-function prisma(args, { databaseUrl, shadowUrl, schema, migrations, allowNonZero = false } = {}) {
+/**
+ * Runs the pinned Prisma CLI in the working copy with an explicit, guarded environment.
+ * Spawn errors, timeouts, signals and exit codes outside `allowedExitCodes` always fail
+ * (checkProcessResult); there is no "accept anything" mode.
+ */
+function prisma(args, { databaseUrl, shadowUrl, schema, migrations, allowedExitCodes = [0] } = {}) {
   guard();
   // Pass the environment through unchanged (never hide Prisma's AI-agent detection variables;
   // see Prisma's agent-safety checkpoint) and only set the database selection for this call.
@@ -99,15 +105,26 @@ function prisma(args, { databaseUrl, shadowUrl, schema, migrations, allowNonZero
   const record = {
     command: `prisma ${args.join(' ')}`,
     exitCode: result.status,
+    signal: result.signal ?? null,
     stdout: redact(result.stdout),
     stderr: redact(result.stderr),
   };
-  if (!allowNonZero && result.status !== 0) {
-    throw new Gate0Failure(
-      `${record.command} exited with ${result.status}\n${record.stderr || record.stdout}`,
-    );
+  try {
+    checkProcessResult(result, { label: record.command, allowedExitCodes });
+  } catch (error) {
+    throw new Gate0Failure(`${error.message}\n${record.stderr || record.stdout}`);
   }
   return record;
+}
+
+/**
+ * `migrate diff --exit-code` that must report a difference (exit 2). Prisma's engine can fail
+ * silently with exit 0 (ADR-034 finding 1), so a positive control proves the engine really
+ * ran in this configuration before an exit 0 is trusted as "no drift".
+ */
+function prismaPositiveControl(args, options, label) {
+  const record = prisma([...args, '--exit-code'], { ...options, allowedExitCodes: [2] });
+  return { ...record, label };
 }
 
 async function step(id, title, fn) {
@@ -272,7 +289,27 @@ async function main() {
       if (rows[0].db !== 'gate0_main')
         throw new Gate0Failure(`reset target is ${rows[0].db}, not gate0_main`);
     });
+    // Rebuild evidence (Codex review of bf06980, finding 2): a synthetic marker row and the table
+    // OIDs before reset. A reset that exits 0 without doing anything leaves both unchanged.
+    const before = await withClient(URLS.GATE0_MAIN_URL, async (client) => {
+      await client.query(`INSERT INTO "PocOrg" ("id") VALUES ($1)`, [RESET_MARKER_ID]);
+      return snapshotForReset(client);
+    });
     ev.reset = prisma(['migrate', 'reset', '--force'], { databaseUrl: URLS.GATE0_MAIN_URL });
+    const after = await withClient(URLS.GATE0_MAIN_URL, (client) => snapshotForReset(client));
+    const expectedMigrations = readdirSync(path.join(WORK, 'prisma', 'migrations'), {
+      withFileTypes: true,
+    }).filter((d) => d.isDirectory()).length;
+    ev.resetEvidence = {
+      before,
+      after,
+      ...assessResetEvidence(before, after, { expectedMigrations }),
+    };
+    if (!ev.resetEvidence.ok) {
+      throw new Gate0Failure(
+        `TC-18: reset did not rebuild gate0_main: ${ev.resetEvidence.reasons.join('; ')}`,
+      );
+    }
     await verifyDatabase(URLS.GATE0_MAIN_URL, 'main-after-reset', ev);
   });
 
@@ -286,6 +323,19 @@ async function main() {
   await step('S8', 'G0-7: drift checks (TC-20, TC-21, TC-22)', async (ev) => {
     const migrationsDir = path.join(WORK, 'prisma', 'migrations');
     const schemaPath = path.join(WORK, 'prisma', 'schema.prisma');
+
+    // Positive controls: each diff source must be able to report a difference (exit 2) before
+    // an exit 0 from the same source is accepted as "no drift" (ADR-034 finding 1).
+    ev.controlMigrations = prismaPositiveControl(
+      ['migrate', 'diff', '--from-migrations', migrationsDir, '--to-empty'],
+      { databaseUrl: URLS.GATE0_MAIN_URL, shadowUrl: URLS.GATE0_SHADOW_URL },
+      'migrations vs empty must differ',
+    );
+    ev.controlDatasource = prismaPositiveControl(
+      ['migrate', 'diff', '--from-config-datasource', '--to-empty'],
+      { databaseUrl: URLS.GATE0_FRESH_URL },
+      'gate0_fresh vs empty must differ',
+    );
 
     // TC-20: migrations → schema (needs the shadow database). Recorded, must not error.
     ev.tc20 = prisma(
@@ -313,9 +363,12 @@ async function main() {
         schemaPath,
         '--exit-code',
       ],
-      { databaseUrl: URLS.GATE0_MAIN_URL, shadowUrl: URLS.GATE0_SHADOW_URL, allowNonZero: true },
+      {
+        databaseUrl: URLS.GATE0_MAIN_URL,
+        shadowUrl: URLS.GATE0_SHADOW_URL,
+        allowedExitCodes: DIFF_EXIT_CODES,
+      },
     );
-    if (ev.tc20ExitCode.exitCode === 1) throw new Gate0Failure('TC-20: migrate diff errored.');
 
     // TC-21: live database → schema. Recorded, must not error.
     ev.tc21 = prisma(
@@ -328,10 +381,9 @@ async function main() {
       ['migrate', 'diff', '--from-config-datasource', '--to-schema', schemaPath, '--exit-code'],
       {
         databaseUrl: URLS.GATE0_FRESH_URL,
-        allowNonZero: true,
+        allowedExitCodes: DIFF_EXIT_CODES,
       },
     );
-    if (ev.tc21ExitCode.exitCode === 1) throw new Gate0Failure('TC-21: migrate diff errored.');
 
     // TC-22: drop one manual CHECK on the disposable gate0_fresh, then see which method notices.
     const dropped = 'poc_payment_fee_bearer_amounts_check';
@@ -341,7 +393,7 @@ async function main() {
     ev.tc22 = { dropped };
     ev.tc22.prismaDiffAfterDrop = prisma(
       ['migrate', 'diff', '--from-config-datasource', '--to-schema', schemaPath, '--exit-code'],
-      { databaseUrl: URLS.GATE0_FRESH_URL, allowNonZero: true },
+      { databaseUrl: URLS.GATE0_FRESH_URL, allowedExitCodes: DIFF_EXIT_CODES },
     );
     ev.tc22.prismaDetects =
       ev.tc22.prismaDiffAfterDrop.exitCode !== ev.tc21ExitCode.exitCode
@@ -362,7 +414,15 @@ async function main() {
     const nativeMigrations = path.join(WORK, 'variants', 'native', 'migrations');
 
     // TC-23 / TC-24: does Prisma accept the composite relations? (recorded outcome)
-    ev.validate = prisma(['validate'], { schema: nativeSchema, allowNonZero: true });
+    // Exit 1 is a recorded outcome only when Prisma actually reported a schema validation error;
+    // a timeout, signal or any other exit code fails the run.
+    ev.validate = prisma(['validate'], { schema: nativeSchema, allowedExitCodes: [0, 1] });
+    if (
+      ev.validate.exitCode === 1 &&
+      !/validat|error/i.test(`${ev.validate.stderr}\n${ev.validate.stdout}`)
+    ) {
+      throw new Gate0Failure('TC-23/24: prisma validate exited 1 without a validation error.');
+    }
     ev.nativeSupported = ev.validate.exitCode === 0;
 
     if (ev.nativeSupported) {

@@ -29,6 +29,13 @@ Before writing the full schema, we must confirm that Prisma's migration workflow
 
 `poc/gate-0/scripts/run-gate0.mjs` runs plan steps S3–S9. It covers TC-01..TC-26 for G0-1..G0-8 and stops at the first failure. Evidence goes to the `gate0-report` artifact.
 
+**Run-validity rules**（added after the Codex review of `bf06980`, so the PoC cannot report a false pass）：
+
+1. **Process results：** spawn errors, timeouts, signals and missing exit statuses always fail. Each command accepts only its declared exit codes, e.g. `migrate diff --exit-code` accepts only 0 or 2.
+2. **Positive controls：** before an exit 0 from `migrate diff` is trusted as "no drift", the same source must report a difference (exit 2) against an empty schema.
+3. **Reset evidence（TC-18）：** a synthetic marker row is written before `migrate reset`. After the reset, the marker must be gone, every `Poc*` table must have a new OID, and every migration must have finished after the pre-reset snapshot.
+4. **CHECK definitions：** the registry compares each normalized `pg_get_constraintdef` with the expected condition, not only the name and type. TC-06b and TC-06c cover incomplete void fields.
+
 ## Results
 
 **Not executed yet.** Each row is filled in from the run report.

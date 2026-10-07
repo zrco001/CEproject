@@ -100,6 +100,31 @@ export const CASES = Object.freeze([
       constraints: ['poc_allocation_void_fields_check'],
     },
   },
+  {
+    // Detects a CHECK weakened to ignore voidReason (Codex review of bf06980, finding 3).
+    id: 'TC-06b',
+    gate: 'G0-1',
+    title: 'Allocation with voidedAt and voidedById but without voidReason',
+    statements: [
+      `INSERT INTO "PocAllocation" ("id","organizationId","paymentId","targetKey","amount","voidedAt","voidedById") VALUES ('tc06b', 'org_A', 'pay_A1', 'payable-6b', 1, now(), 'user-1')`,
+    ],
+    expect: {
+      sqlstate: SQLSTATE.CHECK_VIOLATION,
+      constraints: ['poc_allocation_void_fields_check'],
+    },
+  },
+  {
+    id: 'TC-06c',
+    gate: 'G0-1',
+    title: 'Allocation with voidedById and voidReason but without voidedAt',
+    statements: [
+      `INSERT INTO "PocAllocation" ("id","organizationId","paymentId","targetKey","amount","voidedById","voidReason") VALUES ('tc06c', 'org_A', 'pay_A1', 'payable-6c', 1, 'user-1', 'TC-06c')`,
+    ],
+    expect: {
+      sqlstate: SQLSTATE.CHECK_VIOLATION,
+      constraints: ['poc_allocation_void_fields_check'],
+    },
+  },
 
   // G0-2 Partial unique index
   {

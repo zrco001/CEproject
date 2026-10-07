@@ -29,9 +29,33 @@ export const MANUAL_CONSTRAINTS = Object.freeze([
     columns: ['organizationId', 'vendorId'],
     references: { table: 'PocVendor', columns: ['organizationId', 'id'] },
   },
-  { name: 'poc_payment_fee_bearer_amounts_check', table: 'PocPayment', kind: 'check' },
-  { name: 'poc_allocation_amount_positive_check', table: 'PocAllocation', kind: 'check' },
-  { name: 'poc_allocation_void_fields_check', table: 'PocAllocation', kind: 'check' },
+  // `condition` must stay identical (after normalizeCheck) to the CHECK text in the init
+  // migration; tests/definitions.test.mjs enforces this.
+  {
+    name: 'poc_payment_fee_bearer_amounts_check',
+    table: 'PocPayment',
+    kind: 'check',
+    condition: `("feeBearer" = 'COMPANY'
+      AND "bankOutflowAmount" = "paymentAmount" + "feeAmount"
+      AND "payeeReceivedAmount" = "paymentAmount")
+    OR ("feeBearer" = 'COUNTERPARTY'
+      AND "feeAmount" < "paymentAmount"
+      AND "bankOutflowAmount" = "paymentAmount"
+      AND "payeeReceivedAmount" = "paymentAmount" - "feeAmount")`,
+  },
+  {
+    name: 'poc_allocation_amount_positive_check',
+    table: 'PocAllocation',
+    kind: 'check',
+    condition: `"amount" > 0`,
+  },
+  {
+    name: 'poc_allocation_void_fields_check',
+    table: 'PocAllocation',
+    kind: 'check',
+    condition: `(("voidedAt" IS NULL) = ("voidedById" IS NULL))
+    AND (("voidedAt" IS NULL) = ("voidReason" IS NULL))`,
+  },
   {
     name: 'poc_allocation_pair_active_key',
     table: 'PocAllocation',
@@ -60,6 +84,25 @@ const ACTION_NAMES = {
 };
 
 const normalize = (sql) => sql.replaceAll('"', '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * Canonical form of a CHECK expression, so the SQL written in the migration can be compared
+ * with PostgreSQL's deparsed `pg_get_constraintdef` output. PostgreSQL adds parentheses and
+ * type casts (e.g. `'COMPANY'::"PocFeeBearer"`, `(0)::numeric`) but keeps operators, operands
+ * and AND/OR order, so removing casts, parentheses, quotes and whitespace differences leaves
+ * the conditions themselves. A dropped or changed condition therefore no longer matches
+ * (Codex review of bf06980, finding 3).
+ */
+export function normalizeCheck(sql) {
+  return sql
+    .replace(/^\s*CHECK\s*/i, '')
+    .replace(/::(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)/g, '')
+    .replaceAll('"', '')
+    .replace(/[()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
 
 /** Read-only snapshot of all constraints and indexes on the PoC tables. */
 export async function readCatalog(client) {
@@ -123,7 +166,9 @@ export function compareWithRegistry(catalog, options = {}) {
         ALLOWED_FK_ACTIONS.has(constraint.on_delete);
     } else if (entry.kind === 'check' && constraint) {
       found = true;
-      ok = constraint.type === 'c';
+      ok =
+        constraint.type === 'c' &&
+        normalizeCheck(constraint.definition) === normalizeCheck(entry.condition);
     } else if (entry.kind === 'partial_unique_index' && index) {
       found = true;
       const def = normalize(index.definition);
