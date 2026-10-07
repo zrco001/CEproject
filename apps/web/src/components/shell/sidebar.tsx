@@ -6,8 +6,10 @@ import { usePathname } from 'next/navigation';
 import type { MouseEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { SIDEBAR_GROUPS, isLinkActive, matchesPath, pathOf } from './navigation';
+import { SIDEBAR_GROUPS, matchesPath, mostSpecificActiveHref, pathOf } from './navigation';
 import { useQuickAdd } from './quick-add-context';
+
+const SIDEBAR_HREFS = SIDEBAR_GROUPS.flatMap((group) => group.items.map((item) => item.href));
 
 /**
  * Desktop navigation: icon rail at 768–1023px, full left sidebar from 1024px (§9.1).
@@ -16,6 +18,7 @@ import { useQuickAdd } from './quick-add-context';
 export function Sidebar() {
   const pathname = usePathname();
   const { open, openFrom } = useQuickAdd();
+  const activeHref = mostSpecificActiveHref(pathname, SIDEBAR_HREFS);
   const openQuickAdd = (event: MouseEvent<HTMLButtonElement>): void => {
     openFrom(event.currentTarget);
   };
@@ -97,7 +100,7 @@ export function Sidebar() {
             )}
             <ul className="flex flex-col gap-0.5">
               {group.items.map((item) => {
-                const active = isLinkActive(pathname, item.href);
+                const active = item.href === activeHref;
                 return (
                   <li key={item.href}>
                     <Link

@@ -7,6 +7,7 @@ import {
   SIDEBAR_GROUPS,
   isLinkActive,
   matchesPath,
+  mostSpecificActiveHref,
   pathOf,
 } from './navigation';
 
@@ -89,6 +90,15 @@ describe('active path matching', () => {
   it('matches nested paths per segment', () => {
     expect(matchesPath('/finance/receipts/new', ['/finance'])).toBe(true);
     expect(matchesPath('/financeX', ['/finance'])).toBe(false);
+  });
+
+  it('picks only the most specific active sidebar link', () => {
+    const hrefs = SIDEBAR_GROUPS.flatMap((group) => group.items.map((item) => item.href));
+    expect(mostSpecificActiveHref('/settings/employees', hrefs)).toBe('/settings/employees');
+    expect(mostSpecificActiveHref('/settings', hrefs)).toBe('/settings');
+    expect(mostSpecificActiveHref('/finance/receipts/new', hrefs)).toBe('/finance/receipts');
+    expect(mostSpecificActiveHref('/', hrefs)).toBe('/');
+    expect(mostSpecificActiveHref('/nope', hrefs)).toBeUndefined();
   });
 
   it('ignores query strings in hrefs', () => {
