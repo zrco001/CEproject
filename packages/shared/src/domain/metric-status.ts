@@ -165,6 +165,32 @@ export const METRIC_STATUS = {
       }),
     },
   },
+  approvedAdditions: {
+    label: '已核准追加',
+    filters: {
+      changeOrder: statusFilter<ChangeOrderStatus>({
+        DRAFT: 'exclude',
+        SUBMITTED: 'exclude',
+        APPROVED: 'include',
+        REJECTED: 'exclude',
+        CANCELLED: 'exclude',
+      }),
+    },
+    conditions: ['changeOrder.type = ADDITION'],
+  },
+  approvedDeductions: {
+    label: '已核准扣減',
+    filters: {
+      changeOrder: statusFilter<ChangeOrderStatus>({
+        DRAFT: 'exclude',
+        SUBMITTED: 'exclude',
+        APPROVED: 'include',
+        REJECTED: 'exclude',
+        CANCELLED: 'exclude',
+      }),
+    },
+    conditions: ['changeOrder.type = DEDUCTION'],
+  },
 
   // 估驗 / 請款 / 收款 / 收入認列
   totalCertified: { label: '累計估驗', filters: { progressBilling: billingCertified } },
@@ -251,6 +277,20 @@ export const METRIC_STATUS = {
     },
     activeAllocationsOnly: true,
     conditions: ['receivable.sourceType = RETENTION_RELEASE'],
+  },
+  retentionExpectedReleaseDate: {
+    label: '預計退還日',
+    filters: {
+      retentionRelease: statusFilter<RetentionReleaseStatus>({
+        DRAFT: 'include',
+        INVOICED: 'include',
+        VOID: 'exclude',
+      }),
+    },
+    conditions: [
+      'when RetentionRelease ∈ {DRAFT, INVOICED} exists: source = RetentionRelease.expectedReleaseDate',
+      'fallback: source = Project.retentionExpectedReleaseDate',
+    ],
   },
 
   // 成本
