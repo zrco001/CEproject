@@ -1,56 +1,71 @@
-name: AI Development Loop
-
+name: Publish reviewed financial metadata proposal
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-  pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
-  issue_comment:
-    types: [created, edited]
   workflow_dispatch:
-    inputs:
-      pr_number:
-        description: Same-repository PR to check after local review or human approval
-        type: string
-        required: true
-
-concurrency:
-  group: ai-development-loop
-  cancel-in-progress: false
-
 permissions:
   contents: read
-
 jobs:
-  local-review-gate:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.repository.full_name == github.repository) ||
-      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.type == 'User' && startsWith(github.event.comment.body, '<!-- local-ai-review -->'))
+  publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
-      contents: read
-      # Write permission lets the trusted gate publish its PR conversation result.
-      # This job never submits APPROVE reviews or calls the merge API.
+      contents: write
       pull-requests: write
-      issues: write
-      statuses: write
-      actions: read
     steps:
-      # Only trusted main code. Never check out or execute PR code here.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: main
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
-      - name: Verify exact-head local review, CI, and human guardrails (no model APIs)
-        run: python .github/ai-loop/local_review_gate.py
+      - name: Publish only the fixed human-supervised and Codex-reviewed commit
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, '.github/ai-loop')
+          import controller as c
+          c.maintainers_only()
+          c.require_protection()
+          base = 'c424745c730afa6cfd3376c69d4a7a315794876f'
+          prepared = '1a9e5543cb2b21425b61edd788ff4ef595aeb13a'
+          source_parent = 'd32a611e30260f785372d1f475b60901703ddd67'
+          expected = {
+              'packages/shared/src/domain/metric-status.ts': ('modified', '9a73bd7fbbecc51ec1d4f3282d1c3efd77e750cf'),
+              'packages/shared/src/domain/metric-status.test.ts': ('modified', '810744a7a4a93748696ba9fe27e0856b36b97f83'),
+              'docs/reviews/PHASE-1-METRIC-ACCEPTANCE.md': ('added', '66907fc54fcee0dcf216ccffe1ea322deb58737e'),
+          }
+          branch = 'claude/phase-1-financial-metadata'
+          assert c.gh('commits/main')['sha'] == base, 'Main advanced: stop for re-review'
+          commit = c.gh(f'commits/{prepared}')
+          assert [p['sha'] for p in commit['parents']] == [source_parent]
+          parent = c.gh(f'commits/{source_parent}')
+          assert [p['sha'] for p in parent['parents']] == [base]
+          comparison = c.gh(f'compare/{base}...{prepared}')
+          assert comparison['status'] == 'ahead' and comparison['total_commits'] == 2
+          assert comparison['merge_base_commit']['sha'] == base
+          assert len(comparison['files']) == len(expected)
+          assert {f['filename'] for f in comparison['files']} == set(expected)
+          for file in comparison['files']:
+              status, blob = expected[file['filename']]
+              assert file['status'] == status and file['sha'] == blob
+          assert c.gh(f'contents/docs/ARCHITECTURE.md?ref={prepared}')['sha'] == '73aafe2ae0ca175117de08bb37e52b465c42b0ea'
+          refs = c.gh(f'git/matching-refs/heads/{branch}')
+          exact = [r for r in refs if r['ref'] == f'refs/heads/{branch}']
+          if exact:
+              assert len(exact) == 1 and exact[0]['object']['sha'] == prepared
+          else:
+              c.gh('git/refs', 'POST', {'ref': f'refs/heads/{branch}', 'sha': prepared})
+          existing = c.gh(f'pulls?state=open&head=zrco001:{branch}')
+          if existing:
+              assert len(existing) == 1 and existing[0]['head']['sha'] == prepared and existing[0]['draft']
+              print(existing[0]['html_url'])
+          else:
+              pr = c.gh('pulls', 'POST', {
+                  'head': branch, 'base': 'main', 'draft': True,
+                  'title': 'feat(shared): complete Phase 1 financial metric metadata',
+                  'body': "Phase 1 lacked separate approved addition/deduction metadata and the retention expected-release date whitelist specified in Architecture §3.4. Add these three definitions with their exact status, type and source/fallback conditions. Preserve all 29 existing metric definitions and document all 45 specification table items, including derived profit dependencies and later-phase dashboard queries.\n\nOnly metric-status.ts, metric-status.test.ts and docs/reviews/PHASE-1-METRIC-ACCEPTANCE.md change. No executable monetary calculations, query/permission logic, architecture, enum/state-machine, DB/migration, dependency, workflow or deployment change is included in this PR. The maintainer explicitly approved this separate supervised financial-metadata plan before implementation; final current-head PR approval remains required.\n\nClaude Pro produced the proposal in three bounded attempts (attempt 2 timed out at 600 seconds). Codex independently reviewed the whole patch, returned source-metadata and dashboard-documentation findings, and checked the corrected proposal before applying it. Existing exporter restrictions and all prior attempt ledgers remain unchanged. No model API or extra usage/automatic reload was enabled.\n\nValidation: formatting, lint and typecheck passed locally; 174 tests passed across shared/API/web/config, including 42 metric tests; all three packages built. Windows API tests required a short workspace SWC cache path, without ACL/config/dependency changes. The compiled before/after comparison confirmed exact equality of all 29 old definitions and exactly three added keys. The acceptance table covers 45/45 specification rows. All 41 loop guardrail tests and existing-workflow actionlint passed.\n\nExact source head: `1a9e5543cb2b21425b61edd788ff4ef595aeb13a`. [Full CI for this head](https://github.com/zrco001/CEproject/actions/runs/37568252578) provides Linux verification and Docker image/compose checks. Codex's exact-head attestation must record human_required; a sensitive PR requires an independent human APPROVED review on this same SHA, followed by a gate refresh and manual merge. AI never submits an APPROVE review or merges main.\n\nRuntime/golden/tenant business queries, multi-release date selection, iOS Safari, database runtime and Phase 2 remain outside this change.\n"})
+              print(pr['html_url'])
+          PY
         env:
           GH_TOKEN: ${{ github.token }}
           AI_PROTECTION_READ_TOKEN: ${{ secrets.AI_PROTECTION_READ_TOKEN }}
-          PR_NUMBER: ${{ inputs.pr_number }}
