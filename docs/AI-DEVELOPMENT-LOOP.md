@@ -5,6 +5,9 @@
 不呼叫 Anthropic/OpenAI 模型 API，也不把訂閱登入憑證放到 GitHub。
 既有訂閱本身仍有費用與額度限制；此處的「免費」指不另外購買 API 或超額用量。
 
+CEproject 採用單人維護模式：一般修改由 Codex 與 CI 驗收，最後由維護者在 GitHub
+手動合併；不要求 PR 作者批准自己的 GitHub PR。這不是自動合併授權。
+
 ## 實際流程
 
 ```mermaid
@@ -79,8 +82,26 @@ Bot comment 不會觸發修正，沒有定時重試、模型呼叫或自動修�
 事件密集時 GitHub 的單一 pending concurrency run 可能取代另一個；可手動重跑 gate。
 
 普通修改要同一 SHA 的完整 CI 與 Codex 審查通過才有 `ai/review-gate` success。
-敏感路徑或語意必須有人工監督實作、真正的獨立真人對當前 SHA 的 APPROVED review 與 CI。
-作者、bot、過期審查均不能替代真人批准；AI 有 blocking findings 時，人工批准也不能使 gate 通過。
+敏感路徑或語意仍須先有具體人工計畫核准與監督實作，再由 repository owner 審閱完成的
+當前 SHA，親自留下明確範圍批准紀錄及通過 CI。單人維護者可以是 PR 作者；不使用 GitHub
+禁止作者自批的 APPROVED review 當作此證據。Bot、其他帳號、過期紀錄、一般 AI 審查或
+label 均不能替代 owner 的明確批准；AI 有 blocking findings 時，人工批准也不能使 gate 通過。
+
+### 敏感範圍的人工批准
+
+僅適用於個人 repository 的 owner（此 repo 為 `zrco001`），且帳號必須具有 admin 權限。
+維護者確認已核准計畫、監督實作並審閱完成的 patch 後，在該 PR 親自貼上：
+
+```text
+<!-- human-scope-approval -->
+{"head_sha":"<當前完整40字元SHA>","decision":"approve","scope":"具體核准範圍及計畫連結"}
+```
+
+這是人對已審閱 patch 的紀錄，不得由 AI 擅自生成，也不授權 Claude 自動修改保護檔案。
+最近的 owner 紀錄為準；`decision` 改成 `reject` 即撤銷。錯誤、過期或空白範圍紀錄也會
+阻擋，不能回退到先前有利批准。更新 commit 後必須重新審閱及記錄完整新 SHA。
+與本機 Codex attestation 一樣，GitHub 帳號身分不能以密碼學證明鍵盤前是人或 AI。
+請勿把可寫入的維護者 token 給自動 Claude runner；Actions 的 token 沒有 contents:write。
 
 ```bash
 gh workflow run ci.yml --ref main -f pr_number=123 -f target_sha=<current-head-sha>
@@ -97,10 +118,50 @@ gh workflow run ai-development-loop.yml --ref main -f pr_number=123
 - DB schema/migration、DROP/TRUNCATE/reset、資安、權限、tenant/project isolation、
   金額計算／財務狀態／指標與 production 部署，全部先停止等人核准；不得由 Claude 自行實作。
 - Phase 2 仍須先有人接受 ADR-34 / §11.2 的 disposable DB PoC；不得直接產生全套 schema。
-- `main` 要求至少一次獨立真人及 CODEOWNER review、撤銷過期批准、最後 push 的獨立批准、
-  對話解決、分支同步，以及 `verify`、`docker`、`ai-loop-tests`、`ai/review-gate`。
-- 保護套用管理員；沒有 AI bypass；禁止 force push、刪除主分支與 auto-merge。
-- draft PR 最後由人標記 ready、批准與手動 merge；AI 不提交 APPROVE、呼叫 merge 或部署。
+- `main` 仍要求 PR；GitHub 必需 approving review 數為 0，CODEOWNER 必批與最後 push 必批
+  關閉，避免單人維護者無法自批的死結。CODEOWNERS 保留為責任歸屬紀錄。
+- 保留 stale approval 撤銷、對話解決與 strict 分支同步；`verify`、`docker`、`ai-loop-tests`、
+  `ai/review-gate` 皆為必需，且綁定 GitHub Actions app 15368。
+- 保護套用管理員；禁止 force push、刪除主分支與 auto-merge。可信 main gate 核對上述
+  單人設定，不允許 PR 內容、label 或變數切換審查模式。歷史 API runner 保留原獨立審查模式且停用。
+- 最後由人標記 ready、審閱及手動 merge；Claude、Codex 與 Actions 不提交 APPROVE、呼叫 merge 或部署。
+
+### 大型敏感 PR 的監督審查路徑
+
+普通審查與自動修改的 160,000 bytes／80 檔上限不變。超過文字預算的 PR 不會因 label、
+檔案數或一句「審查通過」解鎖。Codex 必須取得固定 commit 的完整檔案，逐檔審查及驗證；
+GitHub 截斷的 patch 不能作為全部已審查的證據。這条路徑只接受 `human_required` 決定、
+另外的 owner 當前 SHA 範圍批准及完整 CI；blocking findings 一律阻擋。
+
+使用 `python .github/ai-loop/review_manifest.py <PR號碼>`（需已登入 gh）取得 `review_manifest`，
+將此物件加到真正的 `local-ai-review` attestation。這是唯讀操作，不讀 Secret、不執行 PR 程式。
+Receipt 綁定 base/head SHA、完整檔案數、增刪行數及排序後清單的 SHA-256；清單包含每個
+檔案的路徑、舊名稱、Git blob SHA、變更種類與增刪行數。仍限制 80 檔，且所有頁面／總數
+必須一致。可信 main gate 重新取得清單並核對，不信任 PR 提供的成功結果。
+
+人批准和 AI attestation 是兩種獨立紀錄。修改、刪除批准紀錄或更新 head 後會重新檢查；
+base 改變也會使 receipt 失效，須重新核對差異及產生審查紀錄。此路徑不執行 DB PoC、
+不代表 ADR 已接受，也不授權自動修改 protected paths 或合併。
+
+### 從原有雙人規則過渡
+
+原 main 的可信 gate 不認識單人規則。一次性過渡使用只含流程設定的 PR，不包含其他 PR 的 UI。
+先完成 Codex 審查、CI 及固定 head 的 owner 範圍批准，最後仍由維護者手動合併。
+
+過渡期間保留四個必要檢查，另加 `ai/single-maintainer-bootstrap`（也綁 GitHub Actions app
+15368）。單人 reviewer 數改為 0、CODEOWNER 必批及 last-push 必批關閉；strict、管理員
+保護、对話解決、禁止 force push/delete、auto-merge 關閉全部保留。額外 bootstrap 檢查
+只接受固定設定 PR 的完整 CI、真實 Codex 審查及 owner exact-head 批准；其他 PR 無法
+取得它的 success，因此不能在設定過渡期間先合併。
+
+已審查的一次性 manual-only bootstrap workflow 在暫存分支執行；它只讀取固定已審查 SHA
+的 gate 程式，不安裝套件、不執行其他 PR 程式、不修改保護、不提交 APPROVE 或 merge。
+在使用者先標記 ready 並留下當前 SHA 範圍批准後才執行，產生兩項真實審查狀態。
+既有 main 的舊 gate 仍可能回報單人設定不相容；不得刪除或偽造結果。
+
+設定 PR 由人合併後，Codex 核對 main 所有設定檔與已審查 blob 一致，才移除額外 bootstrap
+context；四項必要檢查及 app 綁定持續保留。再從可信 main 檢查 PR #10。strict 要求 PR #10
+同步新的 main；新 head 需要 CI、Codex 審查及新的 owner 範圍批准。不得沿用舊 head 的批准。
 
 | Label                  | 含義                                       |
 | ---------------------- | ------------------------------------------ |

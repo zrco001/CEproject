@@ -132,7 +132,9 @@ def status(pr, state, description):
 
 def report(pr, verdict, state, label):
     # A newer head invalidates this run; never label or approve it with stale evidence.
-    if gh(f"pulls/{pr['number']}")["head"]["sha"] != pr["head"]["sha"]:
+    current = gh(f"pulls/{pr['number']}")
+    if (current["head"]["sha"] != pr["head"]["sha"]
+            or current.get("base", {}).get("sha") != pr.get("base", {}).get("sha")):
         return False
     body = f"<!-- ai-review:{pr['head']['sha']} -->\n### AI review gate\nCommit: `{pr['head']['sha']}`\n\n{verdict['summary']}"
     for f in verdict["findings"]:
@@ -190,7 +192,7 @@ def approved(pr):
     return False
 
 
-def require_protection():
+def require_protection(review_mode="independent"):
     # GITHUB_TOKEN cannot request administration:read. Use a separate, read-only token.
     token = os.environ.get("AI_PROTECTION_READ_TOKEN")
     if not token:
@@ -199,11 +201,27 @@ def require_protection():
     reviews = protection.get("required_pull_request_reviews") or {}
     checks = protection.get("required_status_checks") or {}
     contexts = set(checks.get("contexts", [])) | {x["context"] for x in checks.get("checks", [])}
+    required = {"verify", "docker", "ai-loop-tests", CONTEXT}
+    if review_mode == "single-maintainer":
+        # Selected only by the trusted main workflow, never by PR text or labels.
+        review_ok = (reviews.get("required_approving_review_count") == 0
+                     and reviews.get("require_code_owner_reviews") is False
+                     and reviews.get("require_last_push_approval") is False)
+        bound = {x["context"] for x in checks.get("checks", []) if x.get("app_id") == 15368}
+        extra_ok = (checks.get("strict") is True and required <= bound
+                    and protection.get("required_conversation_resolution", {}).get("enabled") is True
+                    and protection.get("allow_force_pushes", {}).get("enabled") is False
+                    and protection.get("allow_deletions", {}).get("enabled") is False)
+    elif review_mode == "independent":
+        review_ok = (reviews.get("required_approving_review_count", 0) >= 1
+                     and reviews.get("require_code_owner_reviews"))
+        extra_ok = True
+    else:
+        raise ValueError("Unknown review mode")
     if not (protection.get("enforce_admins", {}).get("enabled")
-            and reviews.get("required_approving_review_count", 0) >= 1
-            and reviews.get("dismiss_stale_reviews") and reviews.get("require_code_owner_reviews")
-            and {"verify", "docker", "ai-loop-tests", CONTEXT} <= contexts):
-        raise ValueError("Configure enforced main protection, CODEOWNERS, stale approvals, and all required checks")
+            and reviews.get("dismiss_stale_reviews") and review_ok and extra_ok
+            and required <= contexts):
+        raise ValueError("Main protection does not match the trusted review mode and required checks")
     if gh("").get("allow_auto_merge"):
         raise ValueError("Disable repository auto-merge before enabling the loop")
 
