@@ -12,6 +12,9 @@
 
 Human approval / ADR / Phase gate links:
 
+<!-- Single maintainer: sensitive scope additionally needs the repository owner's
+exact-head human-scope-approval record. AI must not invent that approval. -->
+
 ## Validation
 
 <!-- Link CI for this exact head and list actual checks/results, including limitations. -->
@@ -31,5 +34,8 @@ Human approval / ADR / Phase gate links:
 
 - [ ] A human maintainer reviewed the exact current commit and applicable risk/rollback plan.
 - [ ] Merge is performed manually by a human. Auto-merge is disabled.
+
+<!-- Ordinary PRs do not require the author to approve their own GitHub PR.
+Required CI and ai/review-gate still apply, including to administrators. -->
 
 <!-- Checkboxes and labels are descriptive. They do not authorize or override enforced checks. -->

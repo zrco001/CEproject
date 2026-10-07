@@ -9,6 +9,8 @@ import controller as c
 from policy import MAX_BYTES, risk_paths, validate_verdict
 
 MARKER = "<!-- local-ai-review -->"
+HUMAN_MARKER = "<!-- human-scope-approval -->"
+MARKERS = (MARKER, HUMAN_MARKER)
 
 
 def parse_report(body, head):
@@ -27,7 +29,7 @@ def parse_report(body, head):
 
 def local_verdict(pr, comments):
     # This is a maintainer attestation of an actual local AI review, not cryptographic
-    # proof of a model run. Bot/self-generated attestations are never accepted.
+    # proof of a model run. Bot identities are never accepted.
     for comment in sorted(comments, key=lambda x: (x.get("updated_at", ""), x["id"]), reverse=True):
         if not comment.get("body", "").startswith(MARKER) or comment["user"]["type"] != "User":
             continue
@@ -40,13 +42,44 @@ def local_verdict(pr, comments):
     raise ValueError("A human maintainer must post the actual local Codex review for this head")
 
 
+def scope_approved(pr, comments):
+    """Explicit current-head approval by the personal repository owner, including PR authors.
+
+    The owner must actually approve the supervised scope; AI must never invent this record.
+    Like local review attestations, account identity is not proof of who operated the account.
+    """
+    owner = c.REPO.split("/", 1)[0]
+    for comment in sorted(comments, key=lambda x: (x.get("updated_at", ""), x["id"]), reverse=True):
+        text = comment.get("body", "")
+        user = comment.get("user", {})
+        if not text.startswith(HUMAN_MARKER) or user.get("type") != "User" or user.get("login") != owner:
+            continue
+        if c.gh(f"collaborators/{owner}/permission")["permission"] != "admin":
+            return False
+        # Latest owner record is authoritative: revocation, edits and stale records cannot
+        # fall back to an earlier approval. A label or local AI review is never approval.
+        try:
+            if len(text.encode()) > MAX_BYTES:
+                return False
+            record = json.loads(text[len(HUMAN_MARKER):].strip())
+            return (isinstance(record, dict) and set(record) == {"head_sha", "decision", "scope"}
+                    and isinstance(record["head_sha"], str)
+                    and re.fullmatch(r"[0-9a-f]{40}", record["head_sha"])
+                    and record["head_sha"] == pr["head"]["sha"]
+                    and record["decision"] == "approve"
+                    and isinstance(record["scope"], str) and bool(record["scope"].strip()))
+        except (ValueError, TypeError):
+            return False
+    return False
+
+
 def evaluate(pr, files, verdict, ci_ok, human):
-    if verdict["decision"] == "changes_requested":
+    if verdict["decision"] == "changes_requested" or any(f["severity"] == "blocking" for f in verdict["findings"]):
         return verdict, "failure", "ai:changes-requested"
     if risk_paths(files) or verdict["decision"] == "human_required":
         if human and ci_ok:
-            return {"summary": "Sensitive scope: local review recorded, independent human approved this head, CI passed", "findings": []}, "success", "ai:ready-to-merge"
-        return {"summary": "Sensitive scope requires supervised implementation and independent human approval on this exact head", "findings": verdict["findings"]}, "failure", "ai:human-required"
+            return {"summary": "Sensitive scope: local review recorded, maintainer explicitly approved this head, CI passed; human must merge", "findings": []}, "success", "ai:ready-to-merge"
+        return {"summary": "Sensitive scope requires supervised implementation and explicit maintainer approval on this exact head", "findings": verdict["findings"]}, "failure", "ai:human-required"
     if not ci_ok:
         return {"summary": "Local review recorded; successful CI for this exact head is still required", "findings": []}, "pending", "ai:changes-requested"
     return verdict, "success", "ai:ready-to-merge"
@@ -59,7 +92,7 @@ def select_pr(event):
         return c.gh(f"pulls/{prs[0]['number']}") if len(prs) == 1 else None
     if event.get("comment"):
         comment = event["comment"]
-        if not event["issue"].get("pull_request") or not comment.get("body", "").startswith(MARKER) or comment["user"]["type"] != "User":
+        if not event["issue"].get("pull_request") or not comment.get("body", "").startswith(MARKERS) or comment["user"]["type"] != "User":
             return None
         if c.gh(f"collaborators/{comment['user']['login']}/permission")["permission"] not in ("write", "maintain", "admin"):
             return None
@@ -77,11 +110,12 @@ def main():
         return
     try:
         c.status(pr, "pending", "Checking local Codex attestation and current-head CI")
-        c.require_protection()
+        c.require_protection(review_mode="single-maintainer")
         files = c.changed_data(pr)
-        verdict = local_verdict(pr, c.pages(f"issues/{pr['number']}/comments"))
+        comments = c.pages(f"issues/{pr['number']}/comments")
+        verdict = local_verdict(pr, comments)
         ci_ok, _ = c.ci_evidence(pr, event)
-        result, state, label = evaluate(pr, files, verdict, ci_ok, c.approved(pr))
+        result, state, label = evaluate(pr, files, verdict, ci_ok, scope_approved(pr, comments))
         c.report(pr, result, state, label)
     except Exception as exc:
         c.report(pr, {"summary": "Local gate stopped: current-head review, protection, or CI evidence needs human attention", "findings": []}, "failure", "ai:human-required")
