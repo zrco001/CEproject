@@ -5,5 +5,10 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "prisma/constraints.registry.ts"]
+  "include": [
+    "src/**/*.ts",
+    "prisma/constraints.registry.ts",
+    "scripts/**/*.ts",
+    "test/db/guard.ts"
+  ]
 }
