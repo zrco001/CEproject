@@ -37,7 +37,7 @@ Before writing the full schema, we must confirm that Prisma's migration workflow
 | `hybrid-baseline`（default） | `prisma/schema.prisma`          | `prisma/migrations`           | Manual SQL                                                          | Records whether the separate native variant is supported |
 | `native-candidate`           | `variants/native/schema.prisma` | `native-candidate/migrations` | Declared natively in Prisma（unique targets become UNIQUE INDEXes） | Native validate must succeed                             |
 
-Both strategies run the same G0-1..G0-7 steps: the full 8-entry registry (native-candidate allows only the unique targets to be indexes), all 19 violation cases, TC-16 rejection of any DROP or protected-object change, reset rebuild evidence, a fresh deploy, and drift positive and negative controls.
+Both strategies run the same G0-1..G0-7 steps: the full 8-entry registry (native-candidate allows only the unique targets to be indexes), all 19 violation cases, TC-16 rejection of any DROP or protected-object change, reset rebuild evidence, a fresh deploy, and drift positive and negative controls. G0-7 also rejects a TC-20 / TC-21 drift script that contains any `DROP` or touches a protected object, an empty script reported with exit 2, and SQL statements reported with exit 0; non-destructive drift is recorded only.
 
 **Run-validity rules**（added after the Codex review of `bf06980`, so the PoC cannot report a false pass）：
 
@@ -83,19 +83,19 @@ Both strategies run the same G0-1..G0-7 steps: the full 8-entry registry (native
 
 - `prisma validate` passed, and the init migration was generated with `migrate diff --from-empty`. Both ran offline; no database was involved.
 - The init migration is the generated SQL plus the 3 CHECKs and the partial unique index, appended byte-identically to the baseline.
-- An in-memory PGlite pre-check passed: registry 8/8 with native UNIQUE INDEX targets, 5 RESTRICT FKs, and 19/19 cases.
+- Author-reported in-memory PGlite pre-check: in local scratch, PGlite 0.5.8 (embedded PostgreSQL version not recorded) executed the candidate DDL and SQL with registry 8/8 (native UNIQUE INDEX targets), 5 RESTRICT FKs and 19/19 cases. No artifact was saved and it is **not Gate evidence**. No external PostgreSQL or Docker connection, no `gate0-poc.yml` dispatch, no reset and no formal migration.
 - A schema-to-schema diff for `note` produced only `ADD COLUMN "note"`. The real G0-4 test needs the shadow database and only the run can show it.
 
 ## Findings before the run（not Gate evidence）
 
-These come from offline Prisma commands and an in-memory PGlite (PostgreSQL in WebAssembly) pre-check of the committed SQL. They guided the PoC code but do **not** replace the Gate 0 run.
+These come from offline Prisma commands and an author-reported, in-memory PGlite 0.5.8 pre-check (embedded PostgreSQL version not recorded; no saved artifact) of the committed SQL. They guided the PoC code but do **not** replace the Gate 0 run.
 
 1. **The CLI can fail silently.**
    - **What happened:** Prisma 7's schema engine needs a datasource even for offline `migrate diff --from-empty`. Without one, the engine errored but the CLI printed nothing and **exited 0**.
    - **Mitigation:** the PoC config always supplies a guarded datasource, and the runner treats empty output as a failure.
    - **For the final strategy:** CI must not trust the exit code alone.
 2. **The referenced-side error code differs between engines.**
-   - **What happened:** in the PGlite pre-check (PostgreSQL 17 in WebAssembly), `ON DELETE / ON UPDATE RESTRICT` raised `23001` (restrict_violation). In run 37645666192 on PostgreSQL 16.15, TC-14 and TC-15a returned `23503`. The plan originally expected only `23503`.
+   - **What happened:** in the author-reported PGlite 0.5.8 pre-check (embedded PostgreSQL version not recorded), `ON DELETE / ON UPDATE RESTRICT` raised `23001` (restrict_violation). In run 37645666192 on PostgreSQL 16.15, TC-14 and TC-15a returned `23503`. The plan originally expected only `23503`.
    - **Resolution:** the cases now accept either code and record which one occurred. TC-25 separately checks that the action is RESTRICT or NO ACTION.
 3. **Prisma accepts the native composite relations offline.**
    - **What happened:** Prisma 7.10.0 validated both native composite relations, including the optional one where `organizationId` is required and `vendorId` is nullable. It emitted `ON DELETE RESTRICT ON UPDATE RESTRICT` for them.

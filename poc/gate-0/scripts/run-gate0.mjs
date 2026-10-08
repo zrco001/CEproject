@@ -25,7 +25,7 @@ import {
   compareWithRegistry,
   readCatalog,
 } from './registry.mjs';
-import { inspectAddNoteMigration } from './migration-guard.mjs';
+import { inspectAddNoteMigration, inspectDriftScript } from './migration-guard.mjs';
 import { addNoteColumn, resolveStrategy } from './strategy.mjs';
 
 // Strategy is resolved before any database or scratch (out/) operation; an empty or unknown
@@ -414,6 +414,25 @@ async function main() {
         allowedExitCodes: DIFF_EXIT_CODES,
       },
     );
+
+    // TC-20 / TC-21 decision: the drift script and exit code must agree, and the drift must not
+    // drop anything or touch a protected object (§6.5 step 4). Checked before the intentional
+    // TC-22 negative control below.
+    const protectedNames = MANUAL_CONSTRAINTS.map((c) => c.name);
+    for (const [tc, script, exitCode] of [
+      ['tc20', ev.tc20.stdout, ev.tc20ExitCode.exitCode],
+      ['tc21', ev.tc21.stdout, ev.tc21ExitCode.exitCode],
+    ]) {
+      const inspection = inspectDriftScript(script, exitCode, protectedNames);
+      ev[`${tc}Inspection`] = inspection;
+      if (!inspection.ok) {
+        throw new Gate0Failure(
+          `${tc.toUpperCase()}: ${inspection.reasons.join('; ')}${
+            inspection.offendingLines.length > 0 ? `:\n${inspection.offendingLines.join('\n')}` : ''
+          }`,
+        );
+      }
+    }
 
     // TC-22: drop one manual CHECK on the disposable gate0_fresh, then see which method notices.
     const dropped = 'poc_payment_fee_bearer_amounts_check';
