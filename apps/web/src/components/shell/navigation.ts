@@ -248,6 +248,26 @@ export function isLinkActive(pathname: string, href: string): boolean {
   return matchesPath(pathname, [pathOf(href)]);
 }
 
+/**
+ * The single link that represents the current page: the most specific (longest path) match.
+ * Prevents marking both `/settings` and `/settings/employees` as `aria-current="page"`.
+ */
+export function mostSpecificActiveHref(
+  pathname: string,
+  hrefs: readonly string[],
+): string | undefined {
+  let best: string | undefined;
+  for (const href of hrefs) {
+    if (
+      isLinkActive(pathname, href) &&
+      (best === undefined || pathOf(href).length > pathOf(best).length)
+    ) {
+      best = href;
+    }
+  }
+  return best;
+}
+
 export interface RouteInfo {
   readonly title: string;
   readonly phase: number;

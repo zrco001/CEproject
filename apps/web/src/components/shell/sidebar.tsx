@@ -3,10 +3,13 @@
 import { Plus } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import type { MouseEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { SIDEBAR_GROUPS, isLinkActive, matchesPath, pathOf } from './navigation';
+import { SIDEBAR_GROUPS, matchesPath, mostSpecificActiveHref, pathOf } from './navigation';
 import { useQuickAdd } from './quick-add-context';
+
+const SIDEBAR_HREFS = SIDEBAR_GROUPS.flatMap((group) => group.items.map((item) => item.href));
 
 /**
  * Desktop navigation: icon rail at 768–1023px, full left sidebar from 1024px (§9.1).
@@ -14,9 +17,10 @@ import { useQuickAdd } from './quick-add-context';
  */
 export function Sidebar() {
   const pathname = usePathname();
-  const { setOpen } = useQuickAdd();
-  const openQuickAdd = (): void => {
-    setOpen(true);
+  const { open, openFrom } = useQuickAdd();
+  const activeHref = mostSpecificActiveHref(pathname, SIDEBAR_HREFS);
+  const openQuickAdd = (event: MouseEvent<HTMLButtonElement>): void => {
+    openFrom(event.currentTarget);
   };
 
   return (
@@ -37,6 +41,7 @@ export function Sidebar() {
           className="w-full px-2 lg:hidden"
           aria-label="新增"
           aria-haspopup="dialog"
+          aria-expanded={open}
           onClick={openQuickAdd}
         >
           <Plus />
@@ -45,6 +50,7 @@ export function Sidebar() {
           size="cta"
           className="hidden w-full lg:inline-flex"
           aria-haspopup="dialog"
+          aria-expanded={open}
           onClick={openQuickAdd}
         >
           <Plus />
@@ -69,7 +75,7 @@ export function Sidebar() {
                 href={first.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-center text-[11px] leading-tight',
+                  'flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-center text-[11px] leading-tight focus-visible:-outline-offset-2',
                   active
                     ? 'bg-accent text-primary font-semibold'
                     : 'text-muted-foreground active:bg-accent',
@@ -94,14 +100,14 @@ export function Sidebar() {
             )}
             <ul className="flex flex-col gap-0.5">
               {group.items.map((item) => {
-                const active = isLinkActive(pathname, item.href);
+                const active = item.href === activeHref;
                 return (
                   <li key={item.href}>
                     <Link
                       href={item.href}
                       aria-current={active ? 'page' : undefined}
                       className={cn(
-                        'flex min-h-12 items-center gap-3 rounded-xl px-3 text-[15px]',
+                        'flex min-h-12 items-center gap-3 rounded-xl px-3 text-[15px] focus-visible:-outline-offset-2',
                         active
                           ? 'bg-accent text-primary font-semibold'
                           : 'text-foreground active:bg-accent',

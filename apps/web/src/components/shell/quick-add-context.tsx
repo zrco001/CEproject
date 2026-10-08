@@ -1,10 +1,22 @@
 'use client';
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 
 interface QuickAddState {
   readonly open: boolean;
   readonly setOpen: (open: boolean) => void;
+  /** Opens the sheet and remembers which control opened it, so focus can return there on close. */
+  readonly openFrom: (trigger: HTMLElement) => void;
+  readonly triggerRef: RefObject<HTMLElement | null>;
 }
 
 const QuickAddContext = createContext<QuickAddState | null>(null);
@@ -12,7 +24,12 @@ const QuickAddContext = createContext<QuickAddState | null>(null);
 /** Shares the Quick Add sheet state between the bottom nav CTA, the sidebar button and the sheet. */
 export function QuickAddProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
-  const value = useMemo(() => ({ open, setOpen }), [open]);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const openFrom = useCallback((trigger: HTMLElement) => {
+    triggerRef.current = trigger;
+    setOpen(true);
+  }, []);
+  const value = useMemo(() => ({ open, setOpen, openFrom, triggerRef }), [open, openFrom]);
   return <QuickAddContext value={value}>{children}</QuickAddContext>;
 }
 
