@@ -90,12 +90,12 @@ jobs:
             --publish 127.0.0.1:55432:5432 \
             "$GATE0_POSTGRES_IMAGE"
           for _ in $(seq 1 60); do
-            if docker exec ceproject-gate0-pg pg_isready -U "$GATE0_DB_USER" -d gate0_main >/dev/null 2>&1; then
+            if docker exec ceproject-gate0-pg pg_isready -h 127.0.0.1 -p 5432 -U "$GATE0_DB_USER" -d gate0_main >/dev/null 2>&1; then
               break
             fi
             sleep 1
           done
-          docker exec ceproject-gate0-pg pg_isready -U "$GATE0_DB_USER" -d gate0_main
+          docker exec ceproject-gate0-pg pg_isready -h 127.0.0.1 -p 5432 -U "$GATE0_DB_USER" -d gate0_main
           for db in gate0_shadow gate0_fresh gate0_native; do
             docker exec ceproject-gate0-pg psql -U "$GATE0_DB_USER" -d gate0_main -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
           done
