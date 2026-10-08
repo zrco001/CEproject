@@ -1,6 +1,6 @@
 # Gate 0 — native-candidate 驗收說明
 
-**狀態**：已取得一次真實 PostgreSQL 實測，G0-1～8 案例通過；但清理確認失敗，整個 workflow 為 failure。Gate 0 尚未人工接受，ADR-034 仍為 Proposed，正式 schema 繼續停止。
+**狀態**：Gate 0 已接受（2026-10-08）。Run [37741573406](https://github.com/zrco001/CEproject/actions/runs/37741573406) 全部成功（含清理），ADR-034 為 Accepted；詳見 ADR。先前 run 37737556914 的清理失敗結論保留不變。
 
 **依據**：
 

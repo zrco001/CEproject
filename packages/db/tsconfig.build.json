@@ -1,0 +1,9 @@
+{
+  "extends": "@ceproject/config/tsconfig/library.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "prisma/constraints.registry.ts"]
+}
