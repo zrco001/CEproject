@@ -122,8 +122,19 @@ jobs:
         if: always()
         run: |
           docker stop ceproject-gate0-pg || true
-          if docker ps -a --format '{{.Names}}' | grep -qx ceproject-gate0-pg; then
-            echo "::error::Disposable container still exists after stop."
+          # Stopping a --rm container and removing it need not finish together.
+          # A failed Docker query must fail cleanup, never prove absence.
+          for _ in $(seq 1 30); do
+            names="$(docker ps -a --format '{{.Names}}')"
+            if ! printf '%s\n' "$names" | grep -qx ceproject-gate0-pg; then
+              echo "Disposable container and its tmpfs data are gone."
+              exit 0
+            fi
+            sleep 1
+          done
+          names="$(docker ps -a --format '{{.Names}}')"
+          if printf '%s\n' "$names" | grep -qx ceproject-gate0-pg; then
+            echo "::error::Disposable container still exists after cleanup deadline."
             exit 1
           fi
           echo "Disposable container and its tmpfs data are gone."

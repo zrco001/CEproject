@@ -1,6 +1,6 @@
 # Gate 0 — native-candidate 驗收說明
 
-**狀態**：程式與離線測試已完成；**資料庫實測尚未執行**。Gate 0 未通過，ADR-034 仍為 Proposed，正式 schema 繼續停止。
+**狀態**：已取得一次真實 PostgreSQL 實測，G0-1～8 案例通過；但清理確認失敗，整個 workflow 為 failure。Gate 0 尚未人工接受，ADR-034 仍為 Proposed，正式 schema 繼續停止。
 
 **依據**：
 
@@ -46,7 +46,7 @@ baseline 的 schema、init migration、native variant、失敗證據與原有 58
 | G0-7（TC-20～TC-22） | 正向對照必須回傳 2；diff 只接受 0／2；TC-20、TC-21 的 drift script 不得有任何 `DROP` 或提到受保護物件，exit 2 時 script 不得為空、exit 0 時不得有 SQL 敘述（非破壞性差異只記錄）；刪除一條 CHECK 後 registry 必須偵測到 |
 | G0-8（TC-23～TC-26） | native validate **必須**成功（不接受「不支援」）；生成 SQL 必須含兩條 composite FK 且為 RESTRICT；主 DB FK 稽核通過；native client 可生成                                                                               |
 
-## 4. 離線驗證（已執行，非 Gate 證據）
+## 4. 候選準備時的離線驗證（歷史紀錄，非 Gate 證據）
 
 | 項目                                    | 結果                                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -55,16 +55,24 @@ baseline 的 schema、init migration、native variant、失敗證據與原有 58
 | 本機 PGlite 預檢（作者自述）            | 作者在本機暫存環境，以記憶體內 PGlite 0.5.8（內嵌 PostgreSQL 版本未記錄）執行候選 DDL 與 SQL：registry 8/8、5 條 RESTRICT FK、19/19 案例通過。沒有保存 artifact，**不是 Gate 證據**；未連線任何外部 PostgreSQL／Docker，未觸發 `gate0-poc.yml`，未執行 reset 或正式 migration                                                                                                                                     |
 | 離線 schema 對 schema diff（加 `note`） | 只有 `ADD COLUMN "note"`。真正的 G0-4 需要 shadow DB，只能由實測證明                                                                                                                                                                                                                                                                                                                                              |
 
-## 5. 實測方式（需另外的人工核准）
+## 5. 已執行的 DB 實測與清理修正
 
-本 PR **不**執行資料庫。核准後由維護者手動操作：
+- readiness run [37730226660](https://github.com/zrco001/CEproject/actions/runs/37730226660)：啟動階段失敗，PoC 未開始、G0-1～8 未執行、artifact 為 0；清理成功。PR #13 改為正式 TCP readiness。
+- 使用者另批准一次新 disposable DB 執行後，run [37737556914](https://github.com/zrco001/CEproject/actions/runs/37737556914) 在 `39d18d53a0ba0f91c46c6356bd57e2438e7114bf` 執行 `native-candidate`，Prisma 7.10.0 / PostgreSQL 16.15。沒有自動重跑。
+- [Artifact 11532282922](https://github.com/zrco001/CEproject/actions/runs/37737556914/artifacts/11532282922) 含完整 report 和 SQL。各 Gate 證據、reset marker / OID / migration 時間、FK actions 與 drift 正負向對照，見 ADR-034 的 Run 3。
+- 初始化後、reset 後、fresh deploy 後各 registry 8/8、19/19 資料案例，共 57 次。第二個 migration 只加 note，沒有 DROP 受保護物件。必填與可空 native composite relation validate / generate 成功，5 條 FK 均 RESTRICT / RESTRICT。
+- **Prisma diff 沒有偵測到刻意刪除的 CHECK；registry 有精確指出缺失。後續 drift 把關必須保留 registry，不能只依賴 Prisma diff。**
+- **清理未通過**：stop 後立即 query 仍見同名容器，cleanup exit 1；不能宣稱容器／tmpfs 已確認清除，也不能把 report PASSED 當成整個 workflow success。缺少後續 inspect / daemon logs，延遲移除是推論。
 
-1. **合併：** 由人合併本 PR。
-2. **觸發：** Actions → 「Gate 0 PoC (disposable DB)」→ Run workflow，branch 選 `main`。
-3. **輸入：**
-   - `confirm`：`RUN GATE0 ON DISPOSABLE DB ONLY`
-   - `strategy`：`native-candidate`
-4. **取回報告：** 下載 `gate0-report-native-candidate` artifact，交付驗收。
+本批只修正 teardown：停止同名容器後最多 30 次一秒間隔等待及 31 次 query，確認實際不存在才成功；Docker query 出錯立即失敗，最後查詢仍存在也失敗。指令執行時間另計，Docker 指令若卡住仍受既有 20 分鐘 job timeout 限制。保留 --rm、tmpfs、loopback、人工 confirmation、fail-fast、timeout、always cleanup 和全部 guards；不新增 prune／強制移除、不重跑 DB。
+
+離線測試直接抽取 workflow teardown block，用 docker／sleep stub 覆蓋立即／延遲移除、永不移除、query 失敗、stop 失敗且仍存在、已不存在時 stop 失敗、CRLF 與原程式負向對照；不啟動容器、不連 DB。修正後真實清理效果仍待另行授權的驗證，未執行項目不得宣稱通過。
+
+本批 workflow 與證據文件由 Codex 套用核准提案並核對。Claude Code 在一次兩分鐘限制呼叫內沒有修改，未重試；Claude 訂閱對話產生測試提案，Codex 移除可改指向其他 workflow 的環境變數設定、檢查測試暫存目錄刪除範圍、補上最後 query 失敗／最後 query 才移除兩種邊界案例，再核對並執行。Claude 另審閱完整 workflow／文件 diff，未發現阻擋項，但未自行取回 artifacts、執行工具或測試；實測事實由 Codex 核對保存的證據。這不是另一位 Codex 對 Codex 撰寫部分的獨立審查。
+
+本次本機 PoC 離線測試 138/138、原 AI-loop guardrail 測試 61/61、actionlint 與格式檢查通過；CI 以 PR 的精確 head 紀錄為準。完成版本仍須 owner 明確核准及人工 merge；本次計畫核准不等於完成版批准、DB 重跑或 Gate 接受。
+
+若日後另獲一次 DB 執行授權，才可依同一 `gate0-poc.yml` 手動 dispatch：ref 選已核准的 `main`，`confirm` 為 `RUN GATE0 ON DISPOSABLE DB ONLY`，`strategy` 為 `native-candidate`。這只是操作說明，並非本次執行授權。
 
 一般 CI 只執行 PoC 離線測試，不會啟動資料庫。
 
