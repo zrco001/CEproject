@@ -19,7 +19,7 @@
 **檢查方式**（ADR-034）：
 
 - Prisma diff 偵測不到被刪除的 CHECK（Gate 0 TC-22），因此 **registry 檢查一定要做**。
-- Registry 檢查以語法樹比較 CHECK 與 partial index 條件，保留運算順序與括號分組，不支援的語法判定失敗。它也要求 constraint 已驗證（`convalidated`），index 為 valid / ready / live（`pg_index`）；NOT VALID 的 FK 或無效的 unique index 不算存在。
+- Registry 檢查以語法樹比較 CHECK 與 partial index 條件，保留運算順序、括號分組與會改變值的型別轉換（例如 `::integer` 會四捨五入）；只忽略 PostgreSQL 對常數加上的 enum / text / numeric 轉換。不支援的語法判定失敗。它也要求 constraint 已驗證（`convalidated`），index 為 valid / ready / live（`pg_index`）；NOT VALID 的 FK 或無效的 unique index 不算存在。
 - 新 migration 草稿：任何 `DROP` 或提到受保護名稱的行，一律停止，交人工審查（`inspectMigrationDraft`）。
 - drift script：exit code 與內容必須一致，且不得破壞受保護物件（`inspectDriftScript`）。
 

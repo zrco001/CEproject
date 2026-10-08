@@ -300,6 +300,45 @@ describe('compareWithRegistry', () => {
     expect(result.mismatched).toEqual(['progress_billing_billing_amount_check']);
   });
 
+  // Codex review of d62f1b7, finding P1: numeric → integer rounds, so 85.49 would pass.
+  it('accepts the deparsed I-14 formula with presentation-only parentheses', () => {
+    const result = compareWithRegistry(
+      replaceConstraint(idealCatalog(), 'progress_billing_billing_amount_check', {
+        definition: `CHECK (("billingAmount" = ((("grossAmount" + "changeOrderAmount") - "retentionAmount") - "deductionAmount")))`,
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    [
+      'an integer cast on billingAmount',
+      `CHECK ((("billingAmount")::integer = ((("grossAmount" + "changeOrderAmount") - "retentionAmount") - "deductionAmount")))`,
+    ],
+    [
+      'the same cast inside extra parentheses',
+      `CHECK (((("billingAmount")::integer) = ((("grossAmount" + "changeOrderAmount") - "retentionAmount") - "deductionAmount")))`,
+    ],
+    [
+      'chained casts ending in integer',
+      `CHECK ((("billingAmount")::numeric::integer = ((("grossAmount" + "changeOrderAmount") - "retentionAmount") - "deductionAmount")))`,
+    ],
+    [
+      'an integer cast on the computed right-hand side',
+      `CHECK (("billingAmount" = (((("grossAmount" + "changeOrderAmount") - "retentionAmount") - "deductionAmount"))::integer))`,
+    ],
+    [
+      'a numeric cast on a column (not a constant)',
+      `CHECK ((("billingAmount")::numeric = ((("grossAmount" + "changeOrderAmount") - "retentionAmount") - "deductionAmount")))`,
+    ],
+  ])('reports the I-14 formula with %s as mismatched', (_label, definition) => {
+    const result = compareWithRegistry(
+      replaceConstraint(idealCatalog(), 'progress_billing_billing_amount_check', { definition }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.mismatched).toEqual(['progress_billing_billing_amount_check']);
+  });
+
   it('reports a CHECK with unsupported syntax as mismatched (fail closed)', () => {
     const result = compareWithRegistry(
       replaceConstraint(idealCatalog(), 'receivable_status_not_overdue_check', {
@@ -385,6 +424,14 @@ describe('normalizeCheck: different expression trees stay different', () => {
     ['swapped operands', `"feeAmount" < "paymentAmount"`, `"paymentAmount" < "feeAmount"`],
     ['literal case', `"status" <> 'OVERDUE'`, `"status" <> 'overdue'`],
     ['NOT IN vs IN', `"status" NOT IN ('POSTED')`, `"status" IN ('POSTED')`],
+    [
+      'an integer cast on a column',
+      `"billingAmount" = "grossAmount"`,
+      `("billingAmount")::integer = "grossAmount"`,
+    ],
+    ['an integer cast on a constant', `"amount" > 0`, `"amount" > (0)::integer`],
+    ['a numeric cast on a string constant', `"amount" > 0`, `"amount" > ('0')::numeric`],
+    ['a text cast on a column', `"status" <> 'OVERDUE'`, `("status")::text <> 'OVERDUE'`],
   ])('%s', (_label, expected, changed) => {
     expect(sameExpression(changed, expected)).toBe(false);
   });

@@ -5,12 +5,41 @@
 // preserved: `a + b - c - d` and `a + (b - (c - d))` produce different canonical strings.
 // Only presentation differences that PostgreSQL's deparser introduces are removed:
 // - redundant parentheses and identifier quoting / case;
-// - casts (`'COMPANY'::"FeeBearer"`, `(0)::numeric`, `ARRAY[…]::text[]`);
+// - value-preserving casts of constants only: a string literal to an enum type or text, a
+//   numeric literal to numeric, and an ARRAY of such literals to the matching array type
+//   (`'COMPANY'::"FeeBearer"`, `(0)::numeric`, `ARRAY['A'::"T"]::"T"[]`). Every other cast,
+//   e.g. `("billingAmount")::integer`, which rounds, stays in the tree as a cast node and
+//   therefore never matches an expression without it (Codex review of d62f1b7, finding P1);
 // - `x NOT IN (…)` ⇔ `x <> ALL (ARRAY[…])`, `x IN (…)` ⇔ `x = ANY (ARRAY[…])`;
 // - `x BETWEEN a AND b` ⇔ `x >= a AND x <= b`;
 // - associativity of AND / OR chains (flattened, operand order kept).
 // Anything outside this subset (function calls, LIKE, CASE, trailing NOT VALID, …) throws
 // UnsupportedExpressionError, and the registry comparison treats that as a mismatch.
+
+import * as sharedEnums from '@ceproject/shared/enums';
+
+/** Database enum types (equal to the shared enums; test/schema.test.ts), lower-cased. */
+const ENUM_TYPES: ReadonlySet<string> = new Set(
+  Object.entries(sharedEnums)
+    .filter(([, value]) => typeof value === 'object' && Object.isFrozen(value))
+    .map(([name]) => name.toLowerCase()),
+);
+
+/** Casts PostgreSQL's deparser adds to constants without changing their value. */
+function isPresentationCast(operand: Node, type: string, array: boolean): boolean {
+  const isString = (n: Node) => typeof n === 'string' && n.startsWith('str:');
+  const isNumber = (n: Node) => typeof n === 'string' && n.startsWith('num:');
+  const textLike = ENUM_TYPES.has(type) || type === 'text';
+  if (array) {
+    return (
+      typeof operand !== 'string' &&
+      operand.op === 'list' &&
+      ((textLike && operand.args.every(isString)) ||
+        (type === 'numeric' && operand.args.every(isNumber)))
+    );
+  }
+  return (textLike && isString(operand)) || (type === 'numeric' && isNumber(operand));
+}
 
 export class UnsupportedExpressionError extends Error {
   override readonly name = 'UnsupportedExpressionError';
@@ -222,13 +251,13 @@ class Parser {
       items.push(this.additive());
     }
     this.expectOp(']');
-    this.casts();
+    let list = this.casts(node('list', ...items));
     for (; depth > 0; depth -= 1) {
       this.expectOp(')');
-      this.casts();
+      list = this.casts(list);
     }
     this.expectOp(')');
-    return node('list', ...items);
+    return list;
   }
 
   /** [NOT] IN (list) and [NOT] BETWEEN a AND b. */
@@ -285,13 +314,15 @@ class Parser {
       this.position += 1;
       return node('neg', this.unary());
     }
-    const primary = this.primary();
-    this.casts();
-    return primary;
+    return this.casts(this.primary());
   }
 
-  /** Drops `::type` and `::type[]` casts. */
-  private casts(): void {
+  /**
+   * Applies `::type` / `::type[]` casts to `operand`: presentation casts of constants are
+   * dropped, every other cast is kept as a `cast:<type>` node.
+   */
+  private casts(operand: Node): Node {
+    let result = operand;
     while (this.isOp('::')) {
       this.position += 1;
       const type = this.peek();
@@ -299,8 +330,13 @@ class Parser {
         throw new UnsupportedExpressionError(`unsupported cast target ${this.describe(type)}`);
       }
       this.position += 1;
-      if (this.isOp('[') && this.isOp(']', 1)) this.position += 2;
+      const array = this.isOp('[') && this.isOp(']', 1);
+      if (array) this.position += 2;
+      if (!isPresentationCast(result, type.value, array)) {
+        result = node(`cast:${type.value}${array ? '[]' : ''}`, result);
+      }
     }
+    return result;
   }
 
   private primary(): Node {
