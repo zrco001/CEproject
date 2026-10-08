@@ -4,11 +4,12 @@
 // registry constraint has rejecting and accepting cases. Whether PostgreSQL really accepts or
 // rejects each statement is only known once constraints.spec.ts runs in an authorized database.
 import { readFileSync } from 'node:fs';
+import pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import { REGISTRY } from '../prisma/constraints.registry.js';
 import { COMPOSITE_FK_PLANS, DB_CASES } from './db/cases.js';
 import { FIXTURE_ROWS } from './db/fixtures.js';
-import { IT_DATABASE_ENV, resolveIntegrationDatabaseUrl } from './db/guard.js';
+import { IT_DATABASE_ENV, resolveIntegrationDatabaseConfig } from './db/guard.js';
 import { fixtureInsert, stepStatement, type Statement } from './db/sql.js';
 import { PACKAGE_ROOT, migrationSql, parseEnums, parseTables } from './support/sources.js';
 
@@ -43,30 +44,77 @@ function validate(statement: Statement, where: string, requireAllColumns: boolea
 }
 
 describe('integration database guard', () => {
-  const resolve = (value: string) => resolveIntegrationDatabaseUrl({ [IT_DATABASE_ENV]: value });
+  const resolve = (value: string) => resolveIntegrationDatabaseConfig({ [IT_DATABASE_ENV]: value });
 
   it('skips when no URL is configured', () => {
-    expect(resolveIntegrationDatabaseUrl({})).toBeUndefined();
+    expect(resolveIntegrationDatabaseConfig({})).toBeUndefined();
     expect(resolve('')).toBeUndefined();
   });
 
-  it('accepts only a loopback ceproject_it_* database', () => {
-    expect(resolve('postgresql://it:pw@127.0.0.1:55433/ceproject_it_phase2')).toBeDefined();
-    expect(resolve('postgres://it@localhost/ceproject_it_x')).toBeDefined();
+  it('returns an explicit loopback configuration for a ceproject_it_* database', () => {
+    expect(resolve('postgresql://it:pw@127.0.0.1:55433/ceproject_it_phase2')).toEqual({
+      host: '127.0.0.1',
+      port: 55433,
+      database: 'ceproject_it_phase2',
+      user: 'it',
+      password: 'pw',
+    });
+    expect(resolve('postgres://it@[::1]/ceproject_it_x')).toEqual({
+      host: '::1',
+      port: 5432,
+      database: 'ceproject_it_x',
+      user: 'it',
+    });
+  });
+
+  // Codex review of 683606122, finding P1: pg honours ?host=… and other query overrides.
+  it('makes pg target exactly the validated host, port and database (no connection is made)', () => {
+    const config = resolve('postgresql://it:pw@127.0.0.1:55433/ceproject_it_phase2');
+    const client = new pg.Client({ ...config });
+    expect([client.host, client.port, client.database, client.user]).toEqual([
+      '127.0.0.1',
+      55433,
+      'ceproject_it_phase2',
+      'it',
+    ]);
   });
 
   it.each([
     ['a remote host', 'postgresql://it:secret@db.example.com/ceproject_it_x'],
+    ['a host name instead of a loopback IP', 'postgresql://it:secret@localhost/ceproject_it_x'],
+    ['a look-alike host', 'postgresql://it:secret@127.0.0.1.example.com/ceproject_it_x'],
+    [
+      'a ?host= override (Codex reproduction)',
+      'postgresql://it:secret@127.0.0.1:55433/ceproject_it_review?host=db.example.invalid',
+    ],
+    ['a ?hostaddr= override', 'postgresql://it:secret@127.0.0.1/ceproject_it_x?hostaddr=192.0.2.1'],
+    ['a ?port= override', 'postgresql://it:secret@127.0.0.1/ceproject_it_x?port=6543'],
+    ['a ?options= override', 'postgresql://it:secret@127.0.0.1/ceproject_it_x?options=-c%20x%3Dy'],
+    ['an empty query string', 'postgresql://it:secret@127.0.0.1/ceproject_it_x?'],
+    ['a Unix socket via query', 'postgresql:///ceproject_it_x?host=/var/run/postgresql'],
+    [
+      'an encoded Unix socket host',
+      'postgresql://it:secret@%2Fvar%2Frun%2Fpostgresql/ceproject_it_x',
+    ],
+    ['a fragment', 'postgresql://it:secret@127.0.0.1/ceproject_it_x#secret'],
+    ['a missing user', 'postgresql://127.0.0.1/ceproject_it_x'],
     ['a non-disposable database name', 'postgresql://it:secret@127.0.0.1/ceproject'],
+    ['an extra path segment', 'postgresql://it:secret@127.0.0.1/ceproject_it_x/other'],
     ['another scheme', 'mysql://it:secret@127.0.0.1/ceproject_it_x'],
     ['an invalid URL', 'not a url secret'],
-  ])('rejects %s without echoing the URL', (_label, value) => {
+  ])('rejects %s before any connection, without echoing the URL', (_label, value) => {
     expect(() => resolve(value)).toThrow(IT_DATABASE_ENV);
     try {
       resolve(value);
     } catch (error) {
       expect(String(error)).not.toContain('secret');
     }
+  });
+
+  it('connects the spec with the validated object, never the raw URL', () => {
+    const spec = readFileSync(`${PACKAGE_ROOT}/test/db/constraints.spec.ts`, 'utf8');
+    expect(spec).toContain('new pg.Client({ ...target })');
+    expect(spec).not.toContain('connectionString');
   });
 });
 

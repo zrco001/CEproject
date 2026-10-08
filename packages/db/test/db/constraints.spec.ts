@@ -14,23 +14,24 @@ import { auditForeignKeyActions, compareWithRegistry } from '../../src/registry/
 import { readCatalog } from '../../src/registry/catalog.js';
 import { DB_CASES } from './cases.js';
 import { FIXTURE_ROWS } from './fixtures.js';
-import { resolveIntegrationDatabaseUrl } from './guard.js';
+import { resolveIntegrationDatabaseConfig } from './guard.js';
 import { fixtureInsert, stepStatement } from './sql.js';
 
-const url = resolveIntegrationDatabaseUrl(process.env);
+// Validated, explicit target (host / port / database / user); never the raw URL string.
+const target = resolveIntegrationDatabaseConfig(process.env);
 
 interface PgError {
   readonly code?: string;
   readonly constraint?: string;
 }
 
-describe.skipIf(url === undefined)(
+describe.skipIf(target === undefined)(
   'PostgreSQL integrity (authorized disposable database only)',
   () => {
     let client: pg.Client;
 
     beforeAll(async () => {
-      client = new pg.Client({ connectionString: url });
+      client = new pg.Client({ ...target });
       await client.connect();
     });
 

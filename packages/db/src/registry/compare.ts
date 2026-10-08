@@ -1,6 +1,7 @@
 // Compares a PostgreSQL catalog snapshot with the constraint registry (§6.5 step 3).
 // Pure functions: the snapshot is read by ./catalog.ts; offline tests feed synthetic catalogs.
 import { REGISTRY, type RegistryEntry } from '../../prisma/constraints.registry.js';
+import { canonicalExpression } from './expression.js';
 
 /** pg_constraint.contype */
 export type ConstraintType = 'c' | 'f' | 'p' | 'u' | 't' | 'x' | 'n';
@@ -15,13 +16,22 @@ export interface CatalogConstraint {
   readonly definition: string;
   readonly onUpdate: ReferentialAction;
   readonly onDelete: ReferentialAction;
+  /** pg_constraint.convalidated: false for NOT VALID constraints; absent counts as false. */
+  readonly validated?: boolean;
 }
 
 export interface CatalogIndex {
   readonly name: string;
   readonly table: string;
-  /** pg_indexes.indexdef */
+  /** pg_get_indexdef(indexrelid) (same text as pg_indexes.indexdef) */
   readonly definition: string;
+  /**
+   * pg_index.indisvalid / indisready / indislive (Codex review of 683606122, finding P2).
+   * Absent state counts as false, so incomplete metadata fails closed.
+   */
+  readonly valid?: boolean;
+  readonly ready?: boolean;
+  readonly live?: boolean;
 }
 
 export interface CatalogPrivilege {
@@ -61,28 +71,20 @@ const normalize = (sql: string): string =>
   sql.replaceAll('"', '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 /**
- * Canonical form of a boolean SQL expression, so the text written in the migration compares
- * equal to PostgreSQL's deparsed form. PostgreSQL adds parentheses and casts (e.g.
- * `'COMPANY'::"FeeBearer"`, `(0)::numeric`) and rewrites `x NOT IN (a, b)` as
- * `x <> ALL (ARRAY[a, b])` and `BETWEEN` as `>= AND <=`; those forms are mapped back first.
- * Operators, operands and AND / OR order are kept, so a removed or changed condition no longer
- * matches (same approach as the Gate 0 PoC registry).
+ * Structural canonical form of a CHECK body or index predicate (see ./expression.ts). Grouping
+ * and operator precedence are preserved; unsupported syntax throws.
  */
 export function normalizeCheck(sql: string): string {
-  return sql
-    .replace(/^\s*CHECK\s*/i, '')
-    .replace(/::(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)(?:\[\])?/g, '')
-    .replaceAll('"', '')
-    .replace(/<>\s*ALL\s*\(+\s*ARRAY\s*\[([^\]]*)\]\s*\)+/gi, 'NOT IN ($1)')
-    .replace(
-      /\(?\s*(\w+)\s*>=\s*\(?\s*([\w.']+)\s*\)?\s*\)?\s+AND\s+\(?\s*\1\s*<=\s*\(?\s*([\w.']+)\s*\)?\s*\)?/gi,
-      ' $1 BETWEEN $2 AND $3 ',
-    )
-    .replace(/[()]/g, ' ')
-    .replace(/,/g, ' , ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+  return canonicalExpression(sql);
+}
+
+/** True when both expressions have the same tree; unsupported syntax on either side is false. */
+export function sameExpression(actual: string, expected: string): boolean {
+  try {
+    return canonicalExpression(actual) === canonicalExpression(expected);
+  } catch {
+    return false;
+  }
 }
 
 interface ParsedIndex {
@@ -91,15 +93,20 @@ interface ParsedIndex {
   readonly predicate: string | null;
 }
 
-/** Parses `CREATE [UNIQUE] INDEX name ON schema.table USING method (cols) [WHERE (...)]`. */
+/**
+ * Parses `CREATE [UNIQUE] INDEX name ON schema.table USING method (cols) [WHERE (...)]`.
+ * Columns are lower-cased without quotes; the predicate keeps its original text (string
+ * literals are case-sensitive) for sameExpression.
+ */
 export function parseIndexDefinition(definition: string): ParsedIndex | null {
-  const match = /^create (unique )?index \S+ on \S+ using \w+ \(([^()]*)\)(?: where (.*))?$/.exec(
-    normalize(definition),
-  );
+  const match =
+    /^\s*CREATE (UNIQUE )?INDEX \S+ ON \S+ USING \w+ \(([^()]*)\)(?: WHERE (.*?))?\s*$/is.exec(
+      definition,
+    );
   if (!match) return null;
   return {
     unique: match[1] !== undefined,
-    columns: (match[2] ?? '').split(',').map((column) => column.trim()),
+    columns: (match[2] ?? '').split(',').map((column) => normalize(column)),
     predicate: match[3] ?? null,
   };
 }
@@ -107,6 +114,14 @@ export function parseIndexDefinition(definition: string): ParsedIndex | null {
 const sameColumns = (actual: readonly string[], expected: readonly string[]): boolean =>
   actual.length === expected.length &&
   actual.every((column, i) => column === expected[i]?.toLowerCase());
+
+/** Only an index that is valid, ready and live enforces uniqueness; missing state fails. */
+const usableIndex = (index: CatalogIndex | undefined): index is CatalogIndex =>
+  index !== undefined && index.valid === true && index.ready === true && index.live === true;
+
+/** Text after `REFERENCES t(cols)` may only list RESTRICT / NO ACTION actions (no MATCH FULL,
+ * DEFERRABLE or NOT VALID). */
+const PLAIN_FK_SUFFIX = /^(?: on (?:update|delete) (?:restrict|no action))*$/;
 
 function matchEntry(entry: RegistryEntry, catalog: Catalog): 'present' | 'missing' | 'mismatched' {
   const constraint = catalog.constraints.find(
@@ -118,8 +133,11 @@ function matchEntry(entry: RegistryEntry, catalog: Catalog): 'present' | 'missin
     case 'unique_target':
     case 'unique_index': {
       if (constraint) {
+        // A UNIQUE constraint is enforced by an index of the same name.
         const ok =
           constraint.type === 'u' &&
+          constraint.validated === true &&
+          usableIndex(index) &&
           normalize(constraint.definition) ===
             `unique (${entry.columns.map((c) => c.toLowerCase()).join(', ')})`;
         return ok ? 'present' : 'mismatched';
@@ -127,6 +145,7 @@ function matchEntry(entry: RegistryEntry, catalog: Catalog): 'present' | 'missin
       if (!index) return 'missing';
       const parsed = parseIndexDefinition(index.definition);
       const ok =
+        usableIndex(index) &&
         parsed !== null &&
         parsed.unique &&
         parsed.predicate === null &&
@@ -137,11 +156,12 @@ function matchEntry(entry: RegistryEntry, catalog: Catalog): 'present' | 'missin
       if (!index) return 'missing';
       const parsed = parseIndexDefinition(index.definition);
       const ok =
+        usableIndex(index) &&
         parsed !== null &&
         parsed.unique &&
         parsed.predicate !== null &&
         sameColumns(parsed.columns, entry.columns) &&
-        normalizeCheck(parsed.predicate) === normalizeCheck(entry.predicate);
+        sameExpression(parsed.predicate, entry.predicate);
       return ok ? 'present' : 'mismatched';
     }
     case 'composite_fk': {
@@ -151,8 +171,9 @@ function matchEntry(entry: RegistryEntry, catalog: Catalog): 'present' | 'missin
         `foreign key (${entry.columns.join(', ')}) references ${entry.references.table}(${entry.references.columns.join(', ')})`.toLowerCase();
       const ok =
         constraint.type === 'f' &&
+        constraint.validated === true &&
         definition.startsWith(expected) &&
-        !definition.includes('match full') &&
+        PLAIN_FK_SUFFIX.test(definition.slice(expected.length)) &&
         ALLOWED_FK_ACTIONS.has(constraint.onUpdate) &&
         ALLOWED_FK_ACTIONS.has(constraint.onDelete);
       return ok ? 'present' : 'mismatched';
@@ -161,7 +182,8 @@ function matchEntry(entry: RegistryEntry, catalog: Catalog): 'present' | 'missin
       if (!constraint) return 'missing';
       const ok =
         constraint.type === 'c' &&
-        normalizeCheck(constraint.definition) === normalizeCheck(entry.condition);
+        constraint.validated === true &&
+        sameExpression(constraint.definition, entry.condition);
       return ok ? 'present' : 'mismatched';
     }
     case 'revoked_privileges': {

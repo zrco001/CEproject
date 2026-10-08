@@ -11,20 +11,20 @@
 
 ## 1. 交付內容
 
-| 項目                | 位置                                                  | 內容                                                                                                                                                           |
-| ------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspace 套件      | `packages/db`（`@ceproject/db`）                      | Prisma / `@prisma/client` / `@prisma/adapter-pg` 7.10.0、`pg` 8.23.1 固定版本；lockfile 只有新增，既有套件版本未變                                             |
-| Schema              | `prisma/schema.prisma`                                | §6.2 全部 36 個 model、§6.1 全部 35 個 enum；未建立 FUTURE 的 ProgressBillingItem / ContractItem                                                               |
-| Init migration      | `prisma/migrations/20261008120000_init/migration.sql` | Prisma 7.10.0 離線產生段（36 表、152 條 FK 全部 RESTRICT / RESTRICT），加上手寫段（38 條 CHECK、13 個 partial unique、I-20 REVOKE）                            |
-| Constraint registry | `prisma/constraints.registry.ts`                      | 110 項：21 個 composite target、36 條 composite FK、38 條 CHECK、13 個 partial unique、1 個 unique index、1 項權限；含 I-01～I-26 對照                         |
-| 約束清冊            | `prisma/constraints.md`                               | I-01～I-26 的來源、實作位置、DB 與 application rule 的區分、正反測試；schema ↔ SQL ↔ registry 對照；未執行的 DB 驗證計畫                                       |
-| Registry 檢查       | `src/registry/compare.ts`、`src/registry/catalog.ts`  | 以 `pg_constraint` / `pg_indexes` / `has_table_privilege` 比對名稱、表、類型、定義、FK 欄位與 actions；缺失、弱化、NOT VALID、CASCADE、MATCH FULL 都會判定失敗 |
-| Migration 安全檢查  | `src/migration/inspect.ts`                            | Gate 0 規則：新草稿不得 DROP 或碰到受保護物件；drift script 與 exit code 必須一致                                                                              |
-| Seed 程式           | `src/seed/*`                                          | Permission、7 個系統角色、§8.3 授權矩陣；各組織的預設成本分類函式。可重複執行、只新增不刪除；CLI 需明確確認字串。**未執行**                                    |
-| Client factory      | `src/client.ts`                                       | `createPrismaClient(connectionString)`（driver adapter）；不讀 `.env`                                                                                          |
-| Shared enums        | `packages/shared/src/enums`                           | 補上 §6.1 已列、但 Phase 1 未建立的 `AttachableType`、`AttachmentPurpose`                                                                                      |
-| CI / Turbo          | `turbo.json`                                          | 新增 `generate` task（`prisma generate`，離線），`build / typecheck / lint / test` 依賴它；CI workflow 本身未修改                                              |
-| ADR / 問題清單      | `docs/adr/ADR-034…`、`docs/ARCHITECTURE_ISSUES.md`    | ADR 記錄 run 4 與接受決定，保留 run 1–3 真實結論；14 項非阻擋的實作選擇待人工確認                                                                              |
+| 項目                | 位置                                                                               | 內容                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace 套件      | `packages/db`（`@ceproject/db`）                                                   | Prisma / `@prisma/client` / `@prisma/adapter-pg` 7.10.0、`pg` 8.23.1 固定版本；lockfile 只有新增，既有套件版本未變                                                                                                                                                                                                                                      |
+| Schema              | `prisma/schema.prisma`                                                             | §6.2 全部 36 個 model、§6.1 全部 35 個 enum；未建立 FUTURE 的 ProgressBillingItem / ContractItem                                                                                                                                                                                                                                                        |
+| Init migration      | `prisma/migrations/20261008120000_init/migration.sql`                              | Prisma 7.10.0 離線產生段（36 表、152 條 FK 全部 RESTRICT / RESTRICT），加上手寫段（38 條 CHECK、13 個 partial unique、I-20 REVOKE）                                                                                                                                                                                                                     |
+| Constraint registry | `prisma/constraints.registry.ts`                                                   | 110 項：21 個 composite target、36 條 composite FK、38 條 CHECK、13 個 partial unique、1 個 unique index、1 項權限；含 I-01～I-26 對照                                                                                                                                                                                                                  |
+| 約束清冊            | `prisma/constraints.md`                                                            | I-01～I-26 的來源、實作位置、DB 與 application rule 的區分、正反測試；schema ↔ SQL ↔ registry 對照；未執行的 DB 驗證計畫                                                                                                                                                                                                                                |
+| Registry 檢查       | `src/registry/compare.ts`、`src/registry/expression.ts`、`src/registry/catalog.ts` | 以 `pg_constraint`（含 `convalidated`）、`pg_index`（`indisvalid / indisready / indislive`）與 `has_table_privilege` 比對名稱、表、類型、FK 欄位與 actions；CHECK 與 partial index 條件以保留運算順序與括號分組的語法樹比對。缺失、弱化、改變分組、NOT VALID、DEFERRABLE、CASCADE、MATCH FULL、無效 / 未就緒 / 非 live 的 index、缺少狀態欄位都判定失敗 |
+| Migration 安全檢查  | `src/migration/inspect.ts`                                                         | Gate 0 規則：新草稿不得 DROP 或碰到受保護物件；drift script 與 exit code 必須一致                                                                                                                                                                                                                                                                       |
+| Seed 程式           | `src/seed/*`                                                                       | Permission、7 個系統角色、§8.3 授權矩陣；各組織的預設成本分類函式。可重複執行、只新增不刪除；CLI 需明確確認字串。**未執行**                                                                                                                                                                                                                             |
+| Client factory      | `src/client.ts`                                                                    | `createPrismaClient(connectionString)`（driver adapter）；不讀 `.env`                                                                                                                                                                                                                                                                                   |
+| Shared enums        | `packages/shared/src/enums`                                                        | 補上 §6.1 已列、但 Phase 1 未建立的 `AttachableType`、`AttachmentPurpose`                                                                                                                                                                                                                                                                               |
+| CI / Turbo          | `turbo.json`                                                                       | 新增 `generate` task（`prisma generate`，離線），`build / typecheck / lint / test` 依賴它；CI workflow 本身未修改                                                                                                                                                                                                                                       |
+| ADR / 問題清單      | `docs/adr/ADR-034…`、`docs/ARCHITECTURE_ISSUES.md`                                 | ADR 記錄 run 4 與接受決定，保留 run 1–3 真實結論；14 項非阻擋的實作選擇待人工確認                                                                                                                                                                                                                                                                       |
 
 ## 2. 工作包驗收對照
 
@@ -50,7 +50,7 @@
 | `prisma validate`、`prisma format --check`            | 通過（db 套件的 `lint`）                                            |
 | `prisma generate`                                     | 通過（離線）                                                        |
 | 已提交 SQL 與 `prisma migrate diff --from-empty` 輸出 | Prisma 產生段逐位元組相同（`test/migration.test.ts`，每次 CI 重跑） |
-| `pnpm --filter @ceproject/db test`                    | 547 通過，223 skipped（PostgreSQL 整合測試，未授權資料庫故不執行）  |
+| `pnpm --filter @ceproject/db test`                    | 589 通過，223 skipped（PostgreSQL 整合測試，未授權資料庫故不執行）  |
 | `pnpm format:check / lint / typecheck / test / build` | 全部通過（全 repo）                                                 |
 
 離線測試**沒有**證明 PostgreSQL 實際會接受或拒絕各案例。它們只確認：案例 SQL 與 migration 的表、欄位、NOT NULL、enum 一致，參照都能解析，每條約束都有對應案例。
@@ -61,7 +61,12 @@
 - 正式 schema 的 drift 實測（Gate 0 方式的 `migrate diff` 正向對照與無關欄位草稿）。
 - 建議的執行環境需求列於 `prisma/constraints.md` §5（拋棄式 loopback DB、`app_user` 佈建、deploy、測試、清理證明）。
 
-`normalizeCheck` 對 PostgreSQL 反解析格式（`<> ALL (ARRAY[…])`、`BETWEEN` 展開、型別轉換）的處理，是依 PostgreSQL 行為撰寫的離線樣本測試。若實際輸出不同，registry 檢查會**判定失敗**（不會誤判通過），需在首次 DB 執行時確認。
+**更正（Codex 審查 683606122）**：前一版宣稱 registry 檢查「不會誤判通過」並不正確。原 `normalizeCheck` 會移除所有括號，改變分組的 CHECK（例如 I-14 改成 `gross + (change - (retention - deduction))`）仍被判為相符；FK 與 index 也只比對文字，NOT VALID 的 composite FK 與無效的 unique index 會被判為存在。本版修正：
+
+- CHECK / predicate 解析成保留 PostgreSQL 運算優先順序與分組的語法樹再比較；只移除 PostgreSQL 反解析加入的冗餘括號、型別轉換，以及 `<> ALL (ARRAY[…])`、`BETWEEN` 等固定改寫。不支援的語法一律判定失敗。
+- 讀取並要求 `convalidated = true`，以及 index 的 `indisvalid`、`indisready`、`indislive` 全為 true；狀態缺少時也判定失敗。
+
+反解析格式的樣本是依 PostgreSQL 行為手寫的離線測試，首次 DB 執行時仍需確認；若實際格式不在支援範圍內，結果是判定失敗，而非誤判通過。
 
 ## 5. 範圍外（未變更）
 

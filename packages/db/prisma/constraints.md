@@ -19,6 +19,7 @@
 **檢查方式**（ADR-034）：
 
 - Prisma diff 偵測不到被刪除的 CHECK（Gate 0 TC-22），因此 **registry 檢查一定要做**。
+- Registry 檢查以語法樹比較 CHECK 與 partial index 條件，保留運算順序與括號分組，不支援的語法判定失敗。它也要求 constraint 已驗證（`convalidated`），index 為 valid / ready / live（`pg_index`）；NOT VALID 的 FK 或無效的 unique index 不算存在。
 - 新 migration 草稿：任何 `DROP` 或提到受保護名稱的行，一律停止，交人工審查（`inspectMigrationDraft`）。
 - drift script：exit code 與內容必須一致，且不得破壞受保護物件（`inspectDriftScript`）。
 
@@ -114,7 +115,7 @@ Prisma 原生的 §6.2 unique key（`payable_expense_id_key`、`receivable_progr
 
 未來執行環境（待審查與授權）至少需要：
 
-1. 全新的拋棄式 PostgreSQL 16.15，僅綁定 loopback，資料庫名稱 `ceproject_it_*`（`test/db/guard.ts` 會拒絕其他 URL）。
+1. 全新的拋棄式 PostgreSQL 16.15，僅綁定 loopback，資料庫名稱 `ceproject_it_*`。`test/db/guard.ts` 只接受字面 loopback IP（127.0.0.1 / ::1），拒絕任何 query 參數（如 `?host=`）、fragment 與 Unix socket 形式，並把驗證後的 host / port / database / user 物件交給 pg，不傳原始 URL。
 2. 部署前建立 `app_user`（NOLOGIN、非 superuser、非 table owner），設定預設權限讓之後建立的表授予 `SELECT, INSERT, UPDATE, DELETE`，並讓測試帳號成為 `app_user` 成員。init migration 的 REVOKE 會移除 AuditLog 的 UPDATE / DELETE / TRUNCATE。
 3. `prisma migrate deploy` 套用 `prisma/migrations`，再執行 `pnpm --filter @ceproject/db test`：
    - registry 全部存在且定義相符、所有 FK 為 RESTRICT / NO ACTION；
