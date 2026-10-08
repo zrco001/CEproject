@@ -1,6 +1,6 @@
 # ADR-034: Prisma manual constraints (Phase 2 Gate 0)
 
-**Status**：**Proposed — not accepted.** The `hybrid-baseline` run [37645666192](https://github.com/zrco001/CEproject/actions/runs/37645666192) **failed G0-4**; the `native-candidate` strategy is prepared but **not yet run**. Results and the decision are filled in only from manually dispatched `gate0-poc.yml` runs and are then reviewed by a person. The full schema remains stopped.
+**Status**：**Proposed — not accepted.** The `hybrid-baseline` run failed G0-4. Native-candidate run [37730226660](https://github.com/zrco001/CEproject/actions/runs/37730226660) failed PostgreSQL readiness before the PoC; run [37737556914](https://github.com/zrco001/CEproject/actions/runs/37737556914) passed G0-1..G0-8, but its cleanup step failed and the overall workflow concluded failure. This evidence does not accept Gate 0 or this ADR. The full schema remains stopped.
 
 **Related**：
 
@@ -73,18 +73,42 @@ Both strategies run the same G0-1..G0-7 steps: the full 8-entry registry (native
 - **The rejected draft is kept** as the offline regression fixture `poc/gate-0/tests/fixtures/run-37645666192-hybrid-add-note.sql`.
 - **The draft did not touch the 3 CHECKs or the partial unique index.** Prisma dropped only objects it models (FKs, unique indexes) but that the Hybrid schema did not declare.
 
-### Candidate — `native-candidate`（**not yet run**）
+### Run 2 — `native-candidate` readiness failure（PoC NOT RUN）
 
-| Gate       | Test cases   | Result                                                    |
-| ---------- | ------------ | --------------------------------------------------------- |
-| G0-1..G0-8 | TC-01..TC-26 | PENDING（requires a separately approved manual dispatch） |
+- Run：[37730226660](https://github.com/zrco001/CEproject/actions/runs/37730226660), commit `66bcae9d02a4ecddad406d9537fc1d342669e14f`.
+- The final Unix-socket readiness probe returned exit 2 before `Run Gate 0 PoC`; G0-1..G0-8 were not executed and no report artifact was produced. Cleanup succeeded. This is not a failed migration result.
+- PR #13 changed only the two readiness probes to permanent TCP `127.0.0.1:5432`, with offline regression tests. No run was automatically retried.
+
+### Run 3 — `native-candidate` DB evidence PASS, workflow FAILURE
+
+- Run：[37737556914](https://github.com/zrco001/CEproject/actions/runs/37737556914), manual dispatch after separate human approval, commit `39d18d53a0ba0f91c46c6356bd57e2438e7114bf`.
+- Actual Prisma / Client 7.10.0; PostgreSQL 16.15 on x86_64 Alpine; image digest `sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea`.
+- [Artifact 11532282922](https://github.com/zrco001/CEproject/actions/runs/37737556914/artifacts/11532282922): `gate0-report.json`, `gate0-report.md`, and migration SQL; artifact zip SHA256 `c0d519739d7b7e5f9a93c10007cbb5e257d7b3fc5e9add1a30056c728fba66c6`.
+
+| Gate       | Measured result               | Evidence                                                                                                                                             |
+| ---------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G0-1..G0-3 | PASS                          | S4 / S6 / S7 each registry 8/8 and 19/19 cases; 57 case executions, all 5 FK actions RESTRICT / RESTRICT                                             |
+| G0-4       | PASS                          | TC-16 draft only `ALTER TABLE "PocPayment" ADD COLUMN "note" TEXT`; no DROP or protected-object change; TC-17 registry 8/8 after apply               |
+| G0-5       | PASS                          | Marker 1→0; all four table OIDs changed; both migrations finished after the pre-reset snapshot; registry and cases passed after reset                |
+| G0-6       | PASS                          | Fresh database deploy, registry and cases passed                                                                                                     |
+| G0-7       | PASS                          | Both empty-schema positive controls exit 2; TC-20 / TC-21 no drift, exit 0, empty scripts; registry detected the deliberately missing CHECK in TC-22 |
+| G0-8       | PASS                          | Native required / optional composite relations validate, SQL and DB FK actions are RESTRICT / RESTRICT, client generation succeeds                   |
+| Cleanup    | **FAIL / absence unverified** | `docker stop` returned the container name; the immediate `docker ps -a` still listed it; cleanup exit 1                                              |
+
+The generated add-note migration matches the report SQL, and the downloaded native init SQL is byte-identical to the reviewed committed init. Codex rechecked the saved evidence and pure guard/reset decisions offline; it did not execute another database run.
+
+**Drift finding:** after TC-22 dropped `poc_payment_fee_bearer_amounts_check`, Prisma diff still exited 0 with "No difference detected". The registry correctly reported that exact missing CHECK. Prisma diff alone is insufficient for CHECK drift; the registry must remain a required check in any proposed strategy.
+
+**Cleanup limitation:** the report was written and uploaded before teardown, so its PASSED outcome covers only the PoC. At 2026-10-08 14:26:23 Asia/Taipei, `docker stop` returned and the next query about 15ms later still found the name. Delayed `--rm` removal is a plausible explanation, but no later inspect / daemon logs prove when removal completed. Do not claim the container or tmpfs was verified gone in this run, or relabel the workflow success.
+
+This PR polls for the same container name to disappear after stop: at most 30 one-second sleeps and 31 queries, failing on any Docker query error or a name still present after the final query. Command execution adds to the elapsed time; a hung Docker command is bounded by the existing 20-minute job timeout, not a separate per-command timeout. It does not prune, force-remove, change any DB guard, or start a new DB run. Real cleanup success with the new code is **not yet measured**. The cleanup tests are offline shell simulations.
 
 **Offline preparation（not Gate evidence）：**
 
 - `prisma validate` passed, and the init migration was generated with `migrate diff --from-empty`. Both ran offline; no database was involved.
 - The init migration is the generated SQL plus the 3 CHECKs and the partial unique index, appended byte-identically to the baseline.
 - Author-reported in-memory PGlite pre-check: in local scratch, PGlite 0.5.8 (embedded PostgreSQL version not recorded) executed the candidate DDL and SQL with registry 8/8 (native UNIQUE INDEX targets), 5 RESTRICT FKs and 19/19 cases. No artifact was saved and it is **not Gate evidence**. No external PostgreSQL or Docker connection, no `gate0-poc.yml` dispatch, no reset and no formal migration.
-- A schema-to-schema diff for `note` produced only `ADD COLUMN "note"`. The real G0-4 test needs the shadow database and only the run can show it.
+- A schema-to-schema diff for `note` produced only `ADD COLUMN "note"`. The real shadow-database G0-4 result is now recorded above; the earlier offline diff remains historical preparation evidence.
 
 ## Findings before the run（not Gate evidence）
 
@@ -100,7 +124,7 @@ These come from offline Prisma commands and an author-reported, in-memory PGlite
 3. **Prisma accepts the native composite relations offline.**
    - **What happened:** Prisma 7.10.0 validated both native composite relations, including the optional one where `organizationId` is required and `vendorId` is nullable. It emitted `ON DELETE RESTRICT ON UPDATE RESTRICT` for them.
    - **One difference:** Prisma created the composite unique targets as unique _indexes_, not unique constraints.
-   - **Still to confirm:** the run must confirm this against a real database (TC-23..TC-25).
+   - **Measured later:** run 37737556914 confirmed this against PostgreSQL 16.15 (TC-23..TC-25); the earlier offline result alone was not Gate evidence.
 4. **Prisma has an AI-agent checkpoint on `migrate reset`.**
    - **What happened:** since 7.9.0, `migrate reset` is blocked when Prisma detects an AI-agent environment, until the user consents.
    - **How the PoC handles it:** the PoC does not fake consent or hide detection variables. Human consent is the typed workflow confirmation.
@@ -108,12 +132,14 @@ These come from offline Prisma commands and an author-reported, in-memory PGlite
 
 ## Decision
 
-**PENDING.** The `hybrid-baseline` result alone is not a decision. The decision is written only after the `native-candidate` run (or a human decision not to run it), covering:
+**PENDING HUMAN REVIEW — not adopted.** The measured native-candidate DB results support the following proposal within the architecture's existing §6.5 options:
 
-- **Relation style:** native composite relations or Hybrid (§6.5 rule 7). Hybrid failed G0-4 in run 37645666192.
-- **Migration strategy:** manual SQL appended to Prisma migrations (§6.5 steps 1–6) or the §6.5 step 7 alternative.
-- **CI drift detection:** Prisma `migrate diff`, the constraints registry query, or both.
-- **Exit-code handling:** how CI handles Prisma's silent-failure behaviour.
+- **Relation style:** native composite relations, including the optional relation, with explicit RESTRICT / RESTRICT actions. Hybrid failed G0-4 in run 37645666192.
+- **Migration strategy:** Prisma migration SQL plus appended CHECK / partial unique SQL, with protected-object draft inspection. No formal migration or full schema is authorized by these results.
+- **CI drift detection:** require the constraints registry for manual constraint presence / definitions and retain Prisma diff with positive controls and script / exit-code consistency checks. Prisma diff did not detect the missing CHECK in TC-22.
+- **Exit-code handling:** preserve spawn / timeout / signal rejection, declared exit codes, nonempty SQL evidence when a difference is claimed, and reset rebuild evidence.
+
+The cleanup failure and the unmeasured real behavior of this cleanup fix remain explicitly open. The maintainer must review the evidence and any remaining cleanup verification before accepting this ADR / Gate 0. This PR keeps status Proposed and does not begin the next phase.
 
 ### Fallback if `native-candidate` is not viable（proposal only, not adopted）
 
