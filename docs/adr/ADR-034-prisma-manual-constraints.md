@@ -1,6 +1,6 @@
 # ADR-034: Prisma manual constraints (Phase 2 Gate 0)
 
-**Status**：**Proposed — not accepted.** The `hybrid-baseline` run failed G0-4. Native-candidate run [37730226660](https://github.com/zrco001/CEproject/actions/runs/37730226660) failed PostgreSQL readiness before the PoC; run [37737556914](https://github.com/zrco001/CEproject/actions/runs/37737556914) passed G0-1..G0-8, but its cleanup step failed and the overall workflow concluded failure. This evidence does not accept Gate 0 or this ADR. The full schema remains stopped.
+**Status**：**Accepted**（2026-10-08，repository owner 的明確條件式授權；紀錄見 [PR #14 comment 6054603421](https://github.com/zrco001/CEproject/pull/14#issuecomment-6054603421)）。Native-candidate run [37741573406](https://github.com/zrco001/CEproject/actions/runs/37741573406) 全部 job / step（含 teardown）成功、G0-1..G0-8 通過，證據經 Codex 離線核對。失敗的 runs 37645666192、37730226660、37737556914 依其真實結論保留於下方。
 
 **Related**：
 
@@ -101,7 +101,7 @@ The generated add-note migration matches the report SQL, and the downloaded nati
 
 **Cleanup limitation:** the report was written and uploaded before teardown, so its PASSED outcome covers only the PoC. At 2026-10-08 14:26:23 Asia/Taipei, `docker stop` returned and the next query about 15ms later still found the name. Delayed `--rm` removal is a plausible explanation, but no later inspect / daemon logs prove when removal completed. Do not claim the container or tmpfs was verified gone in this run, or relabel the workflow success.
 
-This PR polls for the same container name to disappear after stop: at most 30 one-second sleeps and 31 queries, failing on any Docker query error or a name still present after the final query. Command execution adds to the elapsed time; a hung Docker command is bounded by the existing 20-minute job timeout, not a separate per-command timeout. It does not prune, force-remove, change any DB guard, or start a new DB run. Real cleanup success with the new code is **not yet measured**. The cleanup tests are offline shell simulations.
+This PR polls for the same container name to disappear after stop: at most 30 one-second sleeps and 31 queries, failing on any Docker query error or a name still present after the final query. Command execution adds to the elapsed time; a hung Docker command is bounded by the existing 20-minute job timeout, not a separate per-command timeout. It does not prune, force-remove, change any DB guard, or start a new DB run. Real cleanup success with the new code was **not yet measured** at the time; run 4 later measured it as successful.
 
 **Offline preparation（not Gate evidence）：**
 
@@ -109,6 +109,23 @@ This PR polls for the same container name to disappear after stop: at most 30 on
 - The init migration is the generated SQL plus the 3 CHECKs and the partial unique index, appended byte-identically to the baseline.
 - Author-reported in-memory PGlite pre-check: in local scratch, PGlite 0.5.8 (embedded PostgreSQL version not recorded) executed the candidate DDL and SQL with registry 8/8 (native UNIQUE INDEX targets), 5 RESTRICT FKs and 19/19 cases. No artifact was saved and it is **not Gate evidence**. No external PostgreSQL or Docker connection, no `gate0-poc.yml` dispatch, no reset and no formal migration.
 - A schema-to-schema diff for `note` produced only `ADD COLUMN "note"`. The real shadow-database G0-4 result is now recorded above; the earlier offline diff remains historical preparation evidence.
+
+### Run 4 — `native-candidate` PASS（**accepted evidence**）
+
+- Run：[37741573406](https://github.com/zrco001/CEproject/actions/runs/37741573406)，exactly one manual dispatch on fixed main `4bcccdcbf9dfd7c99c05573947c99b7827b96266`, workflow blob `11fb4eb211c71ffdf313aa980acbcd604000678c`; no automatic retry.
+- [Artifact 11533697940](https://github.com/zrco001/CEproject/actions/runs/37741573406/artifacts/11533697940), zip digest `sha256:e7bcd9ee98324d059a818839c8cd81d8e4b7462ae6706ea2b28521d2457cbbe0`, checked offline against the reviewed committed SQL and the pure guard / reset decisions.
+
+| Gate       | Result | Evidence                                                                                                                                             |
+| ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G0-1..G0-3 | PASS   | Three registry snapshots each 8/8; three batches each 19/19 violation cases (57 executions); all five FK actions RESTRICT / RESTRICT                 |
+| G0-4       | PASS   | Init SQL byte-identical to the committed native init（SHA256 `63ad84c0…bf45d`）; add-note SQL only adds `PocPayment.note`（SHA256 `788fbbf8…eabe4`） |
+| G0-5       | PASS   | Reset removed the marker, changed all four table OIDs and rebuilt both migrations after the pre-reset snapshot                                       |
+| G0-6       | PASS   | Fresh deploy, registry and cases passed                                                                                                              |
+| G0-7       | PASS   | Both positive controls exit 2; TC-20 / TC-21 script and exit evidence consistent; TC-22 missing CHECK detected by the registry, Prisma diff exit 0   |
+| G0-8       | PASS   | Native required / optional relations validate; client generation succeeds                                                                            |
+| Cleanup    | PASS   | Teardown step and log: `Disposable container and its tmpfs data are gone.`                                                                           |
+
+The successful evidence belongs to this run only; it does not relabel runs 1–3.
 
 ## Findings before the run（not Gate evidence）
 
@@ -132,16 +149,17 @@ These come from offline Prisma commands and an author-reported, in-memory PGlite
 
 ## Decision
 
-**PENDING HUMAN REVIEW — not adopted.** The measured native-candidate DB results support the following proposal within the architecture's existing §6.5 options:
+**Accepted.** Within the architecture's existing §6.5 options (the core architecture is not changed):
 
-- **Relation style:** native composite relations, including the optional relation, with explicit RESTRICT / RESTRICT actions. Hybrid failed G0-4 in run 37645666192.
-- **Migration strategy:** Prisma migration SQL plus appended CHECK / partial unique SQL, with protected-object draft inspection. No formal migration or full schema is authorized by these results.
-- **CI drift detection:** require the constraints registry for manual constraint presence / definitions and retain Prisma diff with positive controls and script / exit-code consistency checks. Prisma diff did not detect the missing CHECK in TC-22.
-- **Exit-code handling:** preserve spawn / timeout / signal rejection, declared exit codes, nonempty SQL evidence when a difference is claimed, and reset rebuild evidence.
+- **Relation style:** native Prisma composite relations, including optional ones (MATCH SIMPLE), with explicit `onDelete: Restrict, onUpdate: Restrict`. The `(organizationId, id)` targets are declared with `@@unique` (Prisma creates unique indexes). Hybrid failed G0-4 in run 1.
+- **Migration strategy:** Prisma-generated migration SQL, with CHECK constraints and partial unique indexes appended to the same `migration.sql` (§6.5 step 1). A new migration draft that contains any `DROP` or references a protected object is not applied; it stops for human review.
+- **CI drift detection:** the constraint registry check is **mandatory** for presence and definitions, because Prisma diff did not detect the missing CHECK in TC-22. Prisma diff is kept with positive controls and script / exit-code consistency checks.
+- **Exit-code handling:** keep spawn / timeout / signal rejection, declared exit codes, non-empty SQL evidence when a difference is claimed, and reset rebuild evidence.
+- **Versions:** Prisma / `@prisma/client` 7.10.0 pinned.
 
-The cleanup failure and the unmeasured real behavior of this cleanup fix remain explicitly open. The maintainer must review the evidence and any remaining cleanup verification before accepting this ADR / Gate 0. This PR keeps status Proposed and does not begin the next phase.
+**Applied in Phase 2:** `packages/db` (schema, init migration, `prisma/constraints.registry.ts`, `prisma/constraints.md`, offline tests). The formal migration and seed are written but **not applied** to any database; the real-database integration run needs a separately authorized environment.
 
-### Fallback if `native-candidate` is not viable（proposal only, not adopted）
+### Fallback（not adopted; kept for history）
 
 If the native-candidate run fails G0-1..G0-8, or a human decides not to pursue it, the existing §6.5 step 7 alternative applies:
 

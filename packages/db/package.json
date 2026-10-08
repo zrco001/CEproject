@@ -1,0 +1,41 @@
+{
+  "name": "@ceproject/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Prisma schema, migrations, manual-constraint registry and seed program (Phase 2).",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "prisma"
+  ],
+  "scripts": {
+    "generate": "prisma generate",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "prisma validate && prisma format --check && eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ceproject/shared": "workspace:*",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@ceproject/config": "workspace:*",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "eslint": "^10.12.0",
+    "prisma": "7.10.0",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}

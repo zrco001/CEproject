@@ -155,6 +155,30 @@ export type PettyCashTxnType = EnumValue<typeof PettyCashTxnType>;
 export const AttachmentStatus = defineEnum(['PENDING', 'UPLOADED', 'REJECTED']);
 export type AttachmentStatus = EnumValue<typeof AttachmentStatus>;
 
+export const AttachableType = defineEnum([
+  'EXPENSE',
+  'PAYMENT',
+  'RECEIPT',
+  'PROGRESS_BILLING',
+  'CHANGE_ORDER',
+  'CONTRACT',
+  'PROJECT',
+  'DAILY_LOG',
+  'VENDOR',
+  'CUSTOMER',
+  'REVENUE_ENTRY',
+]);
+export type AttachableType = EnumValue<typeof AttachableType>;
+
+export const AttachmentPurpose = defineEnum([
+  'INVOICE',
+  'RECEIPT_PHOTO',
+  'CONTRACT_DOC',
+  'SITE_PHOTO',
+  'OTHER',
+]);
+export type AttachmentPurpose = EnumValue<typeof AttachmentPurpose>;
+
 export const AuditAction = defineEnum([
   'CREATE',
   'UPDATE',
