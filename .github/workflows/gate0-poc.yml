@@ -11,6 +11,14 @@ on:
         description: 'Type exactly: RUN GATE0 ON DISPOSABLE DB ONLY'
         required: true
         type: string
+      strategy:
+        description: 'Gate 0 strategy (hybrid-baseline = original PoC; native-candidate = native composite relations)'
+        required: true
+        type: choice
+        default: hybrid-baseline
+        options:
+          - hybrid-baseline
+          - native-candidate
 
 permissions:
   contents: read
@@ -40,12 +48,23 @@ jobs:
         working-directory: .
         env:
           CONFIRM: ${{ inputs.confirm }}
+          STRATEGY: ${{ inputs.strategy }}
         run: |
           if [ "$CONFIRM" != "RUN GATE0 ON DISPOSABLE DB ONLY" ]; then
             echo "::error::Confirmation text does not match. Nothing was started."
             exit 1
           fi
+          # Same allowlist as scripts/strategy.mjs; checked again by the runner before any DB step.
+          case "$STRATEGY" in
+            hybrid-baseline | native-candidate) ;;
+            *)
+              echo "::error::Unknown or empty strategy. Nothing was started."
+              exit 1
+              ;;
+          esac
           echo "GATE0_DISPOSABLE_CONFIRMED=true" >> "$GITHUB_ENV"
+          echo "GATE0_STRATEGY=$STRATEGY" >> "$GITHUB_ENV"
+          echo "Gate 0 strategy: $STRATEGY"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -89,12 +108,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: gate0-report
+          name: gate0-report-${{ inputs.strategy }}
           path: |
             poc/gate-0/out/gate0-report.md
             poc/gate-0/out/gate0-report.json
             poc/gate-0/out/work/prisma/migrations/**
             poc/gate-0/out/work/variants/native/migrations/**
+            poc/gate-0/out/work/native-candidate/migrations/**
           if-no-files-found: warn
           retention-days: 30
 

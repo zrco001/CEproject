@@ -202,6 +202,8 @@ DB、migration 與 reset 屬於 `CLAUDE.md` 規定的「必須停下等人核准
 | TC-21 | `prisma migrate diff`：已套用的 DB 對 schema                                                                                                      | 記錄完整輸出，判斷能否用於 CI                                                                                                                          |
 | TC-22 | 故意在 `gate0_main` 手動 `DROP` 一條 manual constraint，再分別執行 TC-20、TC-21 與 registry 查詢                                                  | 記錄哪一種方法偵測得到。預期 Prisma diff 可能偵測不到 CHECK，因為 Prisma schema 不表達 CHECK，所以 registry 查詢必須偵測到。據此決定 CI drift 檢查方式 |
 
+> 修正紀錄（Codex 審查 052021b，P1）：TC-20、TC-21 的 drift script 不得含任何 `DROP` 或提到受保護物件；exit 2 時 script 不得為空，exit 0 時不得有 SQL 敘述。非破壞性差異只記錄。TC-22 的刻意負向對照與 exit 2 正向對照不變。
+
 ### G0-8 Composite FK 的 Prisma relation 宣告
 
 | TC    | 情境                                                                                                                                                                                                       | 預期與紀錄                                                                                                                                                                                                                                                                                                                                                                                                                                                                |

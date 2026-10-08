@@ -25,12 +25,26 @@ import {
   compareWithRegistry,
   readCatalog,
 } from './registry.mjs';
+import { inspectAddNoteMigration, inspectDriftScript } from './migration-guard.mjs';
+import { addNoteColumn, resolveStrategy } from './strategy.mjs';
+
+// Strategy is resolved before any database or scratch (out/) operation; an empty or unknown
+// GATE0_STRATEGY stops here with no side effects.
+let STRATEGY;
+try {
+  STRATEGY = resolveStrategy(process.env.GATE0_STRATEGY);
+} catch (error) {
+  console.error(`✖ ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
 
 const PRISMA_VERSION = '7.10.0';
 const POC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(POC_ROOT, 'out');
 const WORK = path.join(OUT, 'work');
 const PRISMA_CLI = path.join(POC_ROOT, 'node_modules', 'prisma', 'build', 'index.js');
+const STRATEGY_SCHEMA = path.join(WORK, STRATEGY.schema);
+const STRATEGY_MIGRATIONS = path.join(WORK, STRATEGY.migrations);
 
 const URLS = {
   GATE0_MAIN_URL: process.env.GATE0_MAIN_URL,
@@ -43,6 +57,8 @@ class Gate0Failure extends Error {}
 
 const report = {
   startedAt: new Date().toISOString(),
+  strategy: STRATEGY.id,
+  strategyDescription: STRATEGY.description,
   prismaVersion: PRISMA_VERSION,
   postgresImage: process.env.GATE0_POSTGRES_IMAGE ?? null,
   commit: process.env.GITHUB_SHA ?? null,
@@ -82,8 +98,19 @@ async function withClient(url, fn) {
  * Runs the pinned Prisma CLI in the working copy with an explicit, guarded environment.
  * Spawn errors, timeouts, signals and exit codes outside `allowedExitCodes` always fail
  * (checkProcessResult); there is no "accept anything" mode.
+ * Schema and migrations default to the selected strategy (for hybrid-baseline these are the
+ * same files the config defaults to).
  */
-function prisma(args, { databaseUrl, shadowUrl, schema, migrations, allowedExitCodes = [0] } = {}) {
+function prisma(
+  args,
+  {
+    databaseUrl,
+    shadowUrl,
+    schema = STRATEGY_SCHEMA,
+    migrations = STRATEGY_MIGRATIONS,
+    allowedExitCodes = [0],
+  } = {},
+) {
   guard();
   // Pass the environment through unchanged (never hide Prisma's AI-agent detection variables;
   // see Prisma's agent-safety checkpoint) and only set the database selection for this call.
@@ -161,7 +188,9 @@ function requireRegistry(comparison, label) {
 async function verifyDatabase(url, label, evidence) {
   return withClient(url, async (client) => {
     const catalog = await readCatalog(client);
-    const registry = compareWithRegistry(catalog);
+    // Full 8-entry registry for every strategy; native-candidate only allows the composite
+    // unique targets to be UNIQUE INDEXes instead of UNIQUE constraints.
+    const registry = compareWithRegistry(catalog, STRATEGY.registryOptions);
     const fkActions = auditForeignKeyActions(catalog);
     evidence[`${label}.registry`] = registry;
     evidence[`${label}.fkActions`] = fkActions;
@@ -175,8 +204,7 @@ async function verifyDatabase(url, label, evidence) {
 }
 
 function newMigrationDirs(before) {
-  const dir = path.join(WORK, 'prisma', 'migrations');
-  return readdirSync(dir, { withFileTypes: true })
+  return readdirSync(STRATEGY_MIGRATIONS, { withFileTypes: true })
     .filter((d) => d.isDirectory() && !before.includes(d.name))
     .map((d) => d.name);
 }
@@ -184,7 +212,14 @@ function newMigrationDirs(before) {
 function prepareWorkingCopy() {
   rmSync(OUT, { recursive: true, force: true });
   mkdirSync(WORK, { recursive: true });
-  for (const entry of ['prisma', 'variants', 'scripts', 'prisma.config.ts', 'package.json']) {
+  for (const entry of [
+    'prisma',
+    'variants',
+    'native-candidate',
+    'scripts',
+    'prisma.config.ts',
+    'package.json',
+  ]) {
     cpSync(path.join(POC_ROOT, entry), path.join(WORK, entry), { recursive: true });
   }
 }
@@ -236,14 +271,14 @@ async function main() {
     'S5',
     'G0-4: migrate dev --create-only with an unrelated column (TC-16, TC-17)',
     async (ev) => {
-      const schemaPath = path.join(WORK, 'prisma', 'schema.prisma');
-      const schema = readFileSync(schemaPath, 'utf8');
-      const anchor = '  payeeReceivedAmount Decimal         @db.Decimal(18, 2)\n';
-      if (!schema.includes(anchor))
-        throw new Gate0Failure('Could not find the PocPayment anchor line.');
-      writeFileSync(schemaPath, schema.replace(anchor, `${anchor}  note                String?\n`));
+      const schema = readFileSync(STRATEGY_SCHEMA, 'utf8');
+      try {
+        writeFileSync(STRATEGY_SCHEMA, addNoteColumn(schema, STRATEGY));
+      } catch (error) {
+        throw new Gate0Failure(`TC-16 setup: ${error.message}`);
+      }
 
-      const before = readdirSync(path.join(WORK, 'prisma', 'migrations'));
+      const before = readdirSync(STRATEGY_MIGRATIONS);
       ev.createOnly = prisma(['migrate', 'dev', '--create-only', '--name', 'add_note'], {
         databaseUrl: URLS.GATE0_MAIN_URL,
         shadowUrl: URLS.GATE0_SHADOW_URL,
@@ -251,30 +286,25 @@ async function main() {
       const created = newMigrationDirs(before);
       if (created.length !== 1)
         throw new Gate0Failure(`Expected one new migration, found [${created.join(', ')}]`);
-      const sql = readFileSync(
-        path.join(WORK, 'prisma', 'migrations', created[0], 'migration.sql'),
-        'utf8',
-      );
+      const sql = readFileSync(path.join(STRATEGY_MIGRATIONS, created[0], 'migration.sql'), 'utf8');
       ev.migration2 = { name: created[0], sql };
 
-      // TC-16
-      const manualNames = MANUAL_CONSTRAINTS.map((c) => c.name);
-      const offending = sql
-        .split('\n')
-        .filter((line) => /\bDROP\b/i.test(line) || manualNames.some((n) => line.includes(n)));
-      const addsNote = /ADD COLUMN\s+"note"/i.test(sql);
-      ev.tc16 = { addsNote, offendingLines: offending };
-      if (!addsNote) throw new Gate0Failure('TC-16: migration 2 does not add the "note" column.');
-      if (offending.length > 0) {
+      // TC-16: no DROP and no protected registry object may appear; the note column must.
+      const inspection = inspectAddNoteMigration(
+        sql,
+        MANUAL_CONSTRAINTS.map((c) => c.name),
+      );
+      ev.tc16 = inspection;
+      if (!inspection.ok) {
         throw new Gate0Failure(
-          `TC-16: migration 2 touches manual constraints or drops objects:\n${offending.join('\n')}`,
+          `TC-16: ${inspection.reasons.join('; ')}:\n${inspection.offendingLines.join('\n')}`,
         );
       }
 
       // TC-17
       ev.apply = prisma(['migrate', 'deploy'], { databaseUrl: URLS.GATE0_MAIN_URL });
       await withClient(URLS.GATE0_MAIN_URL, async (client) => {
-        const registry = compareWithRegistry(await readCatalog(client));
+        const registry = compareWithRegistry(await readCatalog(client), STRATEGY.registryOptions);
         ev.tc17 = registry;
         requireRegistry(registry, 'TC-17');
       });
@@ -297,7 +327,7 @@ async function main() {
     });
     ev.reset = prisma(['migrate', 'reset', '--force'], { databaseUrl: URLS.GATE0_MAIN_URL });
     const after = await withClient(URLS.GATE0_MAIN_URL, (client) => snapshotForReset(client));
-    const expectedMigrations = readdirSync(path.join(WORK, 'prisma', 'migrations'), {
+    const expectedMigrations = readdirSync(STRATEGY_MIGRATIONS, {
       withFileTypes: true,
     }).filter((d) => d.isDirectory()).length;
     ev.resetEvidence = {
@@ -321,8 +351,8 @@ async function main() {
 
   // ---------------------------------------------------------------------------------- S8
   await step('S8', 'G0-7: drift checks (TC-20, TC-21, TC-22)', async (ev) => {
-    const migrationsDir = path.join(WORK, 'prisma', 'migrations');
-    const schemaPath = path.join(WORK, 'prisma', 'schema.prisma');
+    const migrationsDir = STRATEGY_MIGRATIONS;
+    const schemaPath = STRATEGY_SCHEMA;
 
     // Positive controls: each diff source must be able to report a difference (exit 2) before
     // an exit 0 from the same source is accepted as "no drift" (ADR-034 finding 1).
@@ -385,6 +415,25 @@ async function main() {
       },
     );
 
+    // TC-20 / TC-21 decision: the drift script and exit code must agree, and the drift must not
+    // drop anything or touch a protected object (§6.5 step 4). Checked before the intentional
+    // TC-22 negative control below.
+    const protectedNames = MANUAL_CONSTRAINTS.map((c) => c.name);
+    for (const [tc, script, exitCode] of [
+      ['tc20', ev.tc20.stdout, ev.tc20ExitCode.exitCode],
+      ['tc21', ev.tc21.stdout, ev.tc21ExitCode.exitCode],
+    ]) {
+      const inspection = inspectDriftScript(script, exitCode, protectedNames);
+      ev[`${tc}Inspection`] = inspection;
+      if (!inspection.ok) {
+        throw new Gate0Failure(
+          `${tc.toUpperCase()}: ${inspection.reasons.join('; ')}${
+            inspection.offendingLines.length > 0 ? `:\n${inspection.offendingLines.join('\n')}` : ''
+          }`,
+        );
+      }
+    }
+
     // TC-22: drop one manual CHECK on the disposable gate0_fresh, then see which method notices.
     const dropped = 'poc_payment_fee_bearer_amounts_check';
     await withClient(URLS.GATE0_FRESH_URL, async (client) => {
@@ -400,7 +449,7 @@ async function main() {
         ? 'exit code changed'
         : 'no change';
     await withClient(URLS.GATE0_FRESH_URL, async (client) => {
-      const registry = compareWithRegistry(await readCatalog(client));
+      const registry = compareWithRegistry(await readCatalog(client), STRATEGY.registryOptions);
       ev.tc22.registry = registry;
       if (!registry.missing.includes(dropped)) {
         throw new Gate0Failure('TC-22: the registry check did not detect the dropped constraint.');
@@ -409,7 +458,94 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------------- S9
-  await step('S9', 'G0-8: native composite relations and Hybrid (TC-23..TC-26)', async (ev) => {
+  if (STRATEGY.g08 === 'require-native') {
+    await step(
+      'S9',
+      'G0-8: native composite relations required (native-candidate, TC-23..TC-26)',
+      nativeCandidateG08,
+    );
+  } else {
+    await step(
+      'S9',
+      'G0-8: native composite relations and Hybrid (TC-23..TC-26)',
+      hybridBaselineG08,
+    );
+  }
+
+  report.outcome = 'passed';
+}
+
+/** Composite FK line expected in the native SQL for TC-23 (required) and TC-24 (optional). */
+const NATIVE_COMPOSITE_FKS = Object.freeze({
+  tc23: {
+    name: 'poc_allocation_payment_id_org_fkey',
+    definition:
+      'FOREIGN KEY ("organizationId", "paymentId") REFERENCES "PocPayment"("organizationId", "id")',
+  },
+  tc24: {
+    name: 'poc_payment_vendor_id_org_fkey',
+    definition:
+      'FOREIGN KEY ("organizationId", "vendorId") REFERENCES "PocVendor"("organizationId", "id")',
+  },
+});
+
+/**
+ * native-candidate G0-8. Native validate must succeed (exit 0 only); the generated SQL must
+ * contain both composite FKs with RESTRICT / NO ACTION; the main database FK audit and native
+ * client generation must pass. There is no recorded "unsupported" outcome on this path.
+ */
+async function nativeCandidateG08(ev) {
+  ev.validate = prisma(['validate']);
+  const diff = prisma([
+    'migrate',
+    'diff',
+    '--from-empty',
+    '--to-schema',
+    STRATEGY_SCHEMA,
+    '--script',
+  ]);
+  if (!diff.stdout.includes('CREATE TABLE')) {
+    throw new Gate0Failure('TC-23/24: migrate diff produced no SQL (silent engine failure).');
+  }
+  ev.nativeSql = diff.stdout;
+  const fkLines = diff.stdout.split('\n').filter((l) => l.includes('FOREIGN KEY'));
+  for (const [tc, fk] of Object.entries(NATIVE_COMPOSITE_FKS)) {
+    const lines = fkLines.filter((l) => l.includes(`"${fk.name}"`));
+    ev[tc] = lines;
+    if (lines.length !== 1 || !lines[0].includes(fk.definition)) {
+      throw new Gate0Failure(`${tc.toUpperCase()}: composite FK ${fk.name} missing or changed.`);
+    }
+  }
+  // TC-25 (SQL text): every emitted FK must be RESTRICT / NO ACTION for delete and update.
+  const badSql = fkLines.filter(
+    (l) => !/ON DELETE (RESTRICT|NO ACTION)/.test(l) || !/ON UPDATE (RESTRICT|NO ACTION)/.test(l),
+  );
+  ev.tc25Sql = { fkLines, violations: badSql };
+  if (badSql.length > 0) {
+    throw new Gate0Failure(`TC-25: FK actions in generated SQL:\n${badSql.join('\n')}`);
+  }
+
+  // TC-25 (database): native-candidate schema on gate0_main after reset.
+  await withClient(URLS.GATE0_MAIN_URL, async (client) => {
+    ev.nativeCandidateFkActions = auditForeignKeyActions(await readCatalog(client));
+    if (!ev.nativeCandidateFkActions.ok) {
+      throw new Gate0Failure(
+        `TC-25 native-candidate: ${ev.nativeCandidateFkActions.violations.join('; ')}`,
+      );
+    }
+  });
+
+  // TC-26: native client generation works (composite FKs proven by S4/S6/S7, TC-10..TC-17).
+  ev.generate = prisma(['generate']);
+  if (!existsSync(path.join(WORK, 'generated', 'native'))) {
+    throw new Gate0Failure('TC-26: prisma generate produced no native client.');
+  }
+  ev.tc26 = { generatedClient: true };
+}
+
+/** hybrid-baseline G0-8 — unchanged from the reviewed baseline runner. */
+async function hybridBaselineG08(ev) {
+  {
     const nativeSchema = path.join(WORK, 'variants', 'native', 'schema.prisma');
     const nativeMigrations = path.join(WORK, 'variants', 'native', 'migrations');
 
@@ -496,9 +632,7 @@ async function main() {
     if (!existsSync(generated))
       throw new Gate0Failure('TC-26: prisma generate produced no client.');
     ev.tc26 = { generatedClient: true };
-  });
-
-  report.outcome = 'passed';
+  }
 }
 
 function writeReport() {
@@ -509,6 +643,7 @@ function writeReport() {
     '# Gate 0 PoC run report',
     '',
     `- Outcome: **${report.outcome.toUpperCase()}**`,
+    `- Strategy: \`${report.strategy}\` — ${report.strategyDescription}`,
     `- Commit: ${report.commit ?? 'n/a'}`,
     `- Run: ${report.runUrl ?? 'n/a'}`,
     `- Prisma: ${report.prismaVersion}; PostgreSQL image: ${report.postgresImage ?? 'n/a'}`,

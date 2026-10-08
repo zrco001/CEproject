@@ -1,13 +1,14 @@
 # ADR-034: Prisma manual constraints (Phase 2 Gate 0)
 
-**Status**：**Proposed — awaiting the Gate 0 run.** Not accepted. The results and decision sections are filled in from the manually dispatched `gate0-poc.yml` run and then reviewed by a person.
+**Status**：**Proposed — not accepted.** The `hybrid-baseline` run [37645666192](https://github.com/zrco001/CEproject/actions/runs/37645666192) **failed G0-4**; the `native-candidate` strategy is prepared but **not yet run**. Results and the decision are filled in only from manually dispatched `gate0-poc.yml` runs and are then reviewed by a person. The full schema remains stopped.
 
 **Related**：
 
 - `docs/ARCHITECTURE.md`（Architecture Approved v0.3）：ADR-24、ADR-34、§6.4、§6.5、§11.2、§14 R-13
 - Plan：`docs/reviews/PHASE-2-GATE-0-PLAN.md`
 - PoC：`poc/gate-0/`
-- Workflow：`.github/workflows/gate0-poc.yml`
+- Workflow：`.github/workflows/gate0-poc.yml`（manual input `strategy`：`hybrid-baseline` default, `native-candidate` explicit）
+- Candidate acceptance：`docs/reviews/GATE-0-NATIVE-CANDIDATE.md`
 
 ## Context
 
@@ -27,7 +28,16 @@ Before writing the full schema, we must confirm that Prisma's migration workflow
 
 ## Method
 
-`poc/gate-0/scripts/run-gate0.mjs` runs plan steps S3–S9. It covers TC-01..TC-26 for G0-1..G0-8 and stops at the first failure. Evidence goes to the `gate0-report` artifact.
+`poc/gate-0/scripts/run-gate0.mjs` runs plan steps S3–S9. It covers TC-01..TC-26 for G0-1..G0-8 and stops at the first failure. Evidence goes to the `gate0-report-<strategy>` artifact.
+
+**Strategies**（`scripts/strategy.mjs`, strict allowlist resolved before any database or scratch operation; empty or unknown values stop the run）：
+
+| Strategy                     | Schema                          | Migrations                    | Composite unique targets / FKs                                      | G0-8                                                     |
+| ---------------------------- | ------------------------------- | ----------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------- |
+| `hybrid-baseline`（default） | `prisma/schema.prisma`          | `prisma/migrations`           | Manual SQL                                                          | Records whether the separate native variant is supported |
+| `native-candidate`           | `variants/native/schema.prisma` | `native-candidate/migrations` | Declared natively in Prisma（unique targets become UNIQUE INDEXes） | Native validate must succeed                             |
+
+Both strategies run the same G0-1..G0-7 steps: the full 8-entry registry (native-candidate allows only the unique targets to be indexes), all 19 violation cases, TC-16 rejection of any DROP or protected-object change, reset rebuild evidence, a fresh deploy, and drift positive and negative controls. G0-7 also rejects a TC-20 / TC-21 drift script that contains any `DROP` or touches a protected object, an empty script reported with exit 2, and SQL statements reported with exit 0; non-destructive drift is recorded only.
 
 **Run-validity rules**（added after the Codex review of `bf06980`, so the PoC cannot report a false pass）：
 
@@ -38,32 +48,54 @@ Before writing the full schema, we must confirm that Prisma's migration workflow
 
 ## Results
 
-**Not executed yet.** Each row is filled in from the run report.
+### Run 1 — `hybrid-baseline`（measured, **FAILED**）
 
-| Gate                             | Test cases           | Result  | Evidence |
-| -------------------------------- | -------------------- | ------- | -------- |
-| G0-1 CHECK                       | TC-01..TC-06         | PENDING |          |
-| G0-2 Partial unique              | TC-07..TC-09         | PENDING |          |
-| G0-3 Composite FK                | TC-10..TC-15 (a/b/c) | PENDING |          |
-| G0-4 `migrate dev`               | TC-16, TC-17         | PENDING |          |
-| G0-5 `migrate reset`             | TC-18                | PENDING |          |
-| G0-6 `migrate deploy`            | TC-19                | PENDING |          |
-| G0-7 Drift                       | TC-20..TC-22         | PENDING |          |
-| G0-8 Composite relation / Hybrid | TC-23..TC-26         | PENDING |          |
+- Run：[37645666192](https://github.com/zrco001/CEproject/actions/runs/37645666192)（manual dispatch, 2026-10-07）
+- Commit：`11338975d2dbb97ee3205b42986c105f281a15a6`
+- Prisma 7.10.0；`postgres:16.15-alpine`
 
-- Run URL：PENDING
-- Commit：PENDING
+| Gate                             | Test cases           | Result   | Evidence                                                                                                                 |
+| -------------------------------- | -------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------ |
+| G0-1 CHECK                       | TC-01..TC-06c        | PASS     | S4: 19/19 cases, registry 8/8                                                                                            |
+| G0-2 Partial unique              | TC-07..TC-09         | PASS     | S4                                                                                                                       |
+| G0-3 Composite FK                | TC-10..TC-15 (a/b/c) | PASS     | S4（TC-14 and TC-15a returned `23503` on PostgreSQL 16.15）                                                              |
+| G0-4 `migrate dev`               | TC-16, TC-17         | **FAIL** | TC-16 blocked the `add_note` draft: it tried to `DROP` both composite FKs and both `(organizationId, id)` unique targets |
+| G0-5 `migrate reset`             | TC-18                | NOT RUN  | Stopped at S5                                                                                                            |
+| G0-6 `migrate deploy`            | TC-19                | NOT RUN  |                                                                                                                          |
+| G0-7 Drift                       | TC-20..TC-22         | NOT RUN  |                                                                                                                          |
+| G0-8 Composite relation / Hybrid | TC-23..TC-26         | NOT RUN  |                                                                                                                          |
+
+**About the failure：**
+
+- **The DROP statements were not applied.** TC-16 inspected the draft and stopped the run before `migrate deploy`.
+- **Reset was not run.**
+- **The disposable container and its tmpfs data were removed.**
+- **The rejected draft is kept** as the offline regression fixture `poc/gate-0/tests/fixtures/run-37645666192-hybrid-add-note.sql`.
+- **The draft did not touch the 3 CHECKs or the partial unique index.** Prisma dropped only objects it models (FKs, unique indexes) but that the Hybrid schema did not declare.
+
+### Candidate — `native-candidate`（**not yet run**）
+
+| Gate       | Test cases   | Result                                                    |
+| ---------- | ------------ | --------------------------------------------------------- |
+| G0-1..G0-8 | TC-01..TC-26 | PENDING（requires a separately approved manual dispatch） |
+
+**Offline preparation（not Gate evidence）：**
+
+- `prisma validate` passed, and the init migration was generated with `migrate diff --from-empty`. Both ran offline; no database was involved.
+- The init migration is the generated SQL plus the 3 CHECKs and the partial unique index, appended byte-identically to the baseline.
+- Author-reported in-memory PGlite pre-check: in local scratch, PGlite 0.5.8 (embedded PostgreSQL version not recorded) executed the candidate DDL and SQL with registry 8/8 (native UNIQUE INDEX targets), 5 RESTRICT FKs and 19/19 cases. No artifact was saved and it is **not Gate evidence**. No external PostgreSQL or Docker connection, no `gate0-poc.yml` dispatch, no reset and no formal migration.
+- A schema-to-schema diff for `note` produced only `ADD COLUMN "note"`. The real G0-4 test needs the shadow database and only the run can show it.
 
 ## Findings before the run（not Gate evidence）
 
-These come from offline Prisma commands and an in-memory PGlite (PostgreSQL in WebAssembly) pre-check of the committed SQL. They guided the PoC code but do **not** replace the Gate 0 run.
+These come from offline Prisma commands and an author-reported, in-memory PGlite 0.5.8 pre-check (embedded PostgreSQL version not recorded; no saved artifact) of the committed SQL. They guided the PoC code but do **not** replace the Gate 0 run.
 
 1. **The CLI can fail silently.**
    - **What happened:** Prisma 7's schema engine needs a datasource even for offline `migrate diff --from-empty`. Without one, the engine errored but the CLI printed nothing and **exited 0**.
    - **Mitigation:** the PoC config always supplies a guarded datasource, and the runner treats empty output as a failure.
    - **For the final strategy:** CI must not trust the exit code alone.
-2. **RESTRICT raises `23001`, not `23503`.**
-   - **What happened:** blocking a delete or update on the referenced side under `ON DELETE / ON UPDATE RESTRICT` raises `23001` (restrict_violation). `NO ACTION` would raise `23503`. The plan originally expected `23503` for TC-14 and TC-15(a).
+2. **The referenced-side error code differs between engines.**
+   - **What happened:** in the author-reported PGlite 0.5.8 pre-check (embedded PostgreSQL version not recorded), `ON DELETE / ON UPDATE RESTRICT` raised `23001` (restrict_violation). In run 37645666192 on PostgreSQL 16.15, TC-14 and TC-15a returned `23503`. The plan originally expected only `23503`.
    - **Resolution:** the cases now accept either code and record which one occurred. TC-25 separately checks that the action is RESTRICT or NO ACTION.
 3. **Prisma accepts the native composite relations offline.**
    - **What happened:** Prisma 7.10.0 validated both native composite relations, including the optional one where `organizationId` is required and `vendorId` is nullable. It emitted `ON DELETE RESTRICT ON UPDATE RESTRICT` for them.
@@ -76,11 +108,18 @@ These come from offline Prisma commands and an in-memory PGlite (PostgreSQL in W
 
 ## Decision
 
-**PENDING.** To be written after the run, covering:
+**PENDING.** The `hybrid-baseline` result alone is not a decision. The decision is written only after the `native-candidate` run (or a human decision not to run it), covering:
 
-- **Relation style:** native composite relations or Hybrid (§6.5 rule 7).
-- **Migration strategy:** manual SQL appended to Prisma migrations (§6.5 steps 1–6) or the §6.5 step 7 alternative (SQL-first migrations).
+- **Relation style:** native composite relations or Hybrid (§6.5 rule 7). Hybrid failed G0-4 in run 37645666192.
+- **Migration strategy:** manual SQL appended to Prisma migrations (§6.5 steps 1–6) or the §6.5 step 7 alternative.
 - **CI drift detection:** Prisma `migrate diff`, the constraints registry query, or both.
 - **Exit-code handling:** how CI handles Prisma's silent-failure behaviour.
 
-If any gate fails, this ADR becomes a proposal for an alternative migration strategy. Phase 2 does not create the full schema until that alternative is reviewed and accepted.
+### Fallback if `native-candidate` is not viable（proposal only, not adopted）
+
+If the native-candidate run fails G0-1..G0-8, or a human decides not to pursue it, the existing §6.5 step 7 alternative applies:
+
+- Prisma only describes the schema and generates the client.
+- Migrations are managed SQL-first by a migration tool such as dbmate or Atlas. The constraints registry query stays as the CI drift check.
+
+This would be proposed for human architecture review. It is **not** adopted automatically, and the pinned Prisma version and the official strategy do not change as part of this PoC. Phase 2 does not create the full schema until a strategy is reviewed and accepted.
